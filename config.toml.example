@@ -1,0 +1,29 @@
+# wikiops configuration file
+# Place this file at ~/.config/wikiops/config.toml
+# or specify a custom path via --config CLI arg or MY_BRAIN_CONFIG env var.
+
+[server]
+# Bind address
+host = "0.0.0.0"
+# Bind port
+port = 8080
+
+[mcp]
+# Streamable HTTP endpoint path
+endpoint = "/mcp"
+# API Key (optional, for simple authentication)
+api_key = "your-api-key-here"
+
+[storage.fns]
+# FNS server base URL
+base_url = "http://localhost:9000"
+# FNS API authentication token
+api_token = "eyJhbGciOiJIUzI1NiIs..."
+# Default vault name
+default_vault = "forge"
+
+[index]
+# SQLite database path (default: ~/.local/share/wikiops/brain.db)
+db_path = "/var/lib/wikiops/brain.db"
+# Embedding dimension (OpenAI text-embedding-3-small = 1536)
+embedding_dim = 1536

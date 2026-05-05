@@ -1,0 +1,8 @@
+/target
+.direnv/
+.env
+result
+.omc
+.sisyphus
+brain.db
+*.swp
