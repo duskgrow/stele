@@ -60,7 +60,7 @@ impl SqliteBackend {
                         .with_context(|| format!("creating parent dir for {db_path}"))?;
                 }
             }
-            format!("sqlite://{db_path}")
+            format!("sqlite://{db_path}?mode=rwc")
         };
 
         let pool = SqlitePoolOptions::new()
