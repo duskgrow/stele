@@ -50,8 +50,8 @@ impl FnsBackend {
         }
     }
 
-    fn auth_header(&self) -> &str {
-        &self.api_token
+    fn auth_header(&self) -> String {
+        format!("Bearer {}", &self.api_token)
     }
 
     async fn send_with_retry<F, Fut>(
@@ -269,6 +269,7 @@ impl FileBackend for FnsBackend {
         let json: FnsResponse = resp.json().await?;
         Self::check_fns_code(&json)?;
 
+        debug!(dir = dir, data = ?json.data, "FNS list raw response");
         let items: Vec<NoteListItem> = json
             .data
             .and_then(|d| serde_json::from_value(d).ok())
@@ -329,10 +330,10 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_header_no_bearer_prefix() {
+    fn test_auth_header_has_bearer_prefix() {
         let backend = make_backend("http://localhost:9000");
-        assert_eq!(backend.auth_header(), "test-token");
-        assert!(!backend.auth_header().starts_with("Bearer"));
+        assert_eq!(backend.auth_header(), "Bearer test-token");
+        assert!(backend.auth_header().starts_with("Bearer"));
     }
 
     #[test]
