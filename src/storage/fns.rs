@@ -270,6 +270,7 @@ impl FileBackend for FnsBackend {
         debug!(dir = dir, data = ?json.data, "FNS list raw response");
         let items: Vec<NoteListItem> = json
             .data
+            .and_then(|d| d.get("list").cloned())
             .and_then(|d| serde_json::from_value(d).ok())
             .unwrap_or_default();
 
