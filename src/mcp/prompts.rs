@@ -26,7 +26,7 @@ impl PromptRegistry {
     pub fn new(file_backend: Arc<dyn FileBackend>) -> Self {
         Self {
             file_backend,
-            prompts_dir: "skills/prompts".to_string(),
+            prompts_dir: "prompts".to_string(),
         }
     }
 
