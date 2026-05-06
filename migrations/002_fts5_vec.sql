@@ -4,7 +4,7 @@ CREATE VIRTUAL TABLE page_embeddings USING vec0(
 );
 
 -- 搜索缓存表
-CREATE TABLE search_cache (
+CREATE TABLE IF NOT EXISTS search_cache (
     query_hash TEXT PRIMARY KEY,
     query TEXT NOT NULL,
     results JSON,
