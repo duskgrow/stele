@@ -26,11 +26,9 @@ struct FnsResponse {
 struct NoteListItem {
     path: String,
     #[serde(default)]
-    is_dir: bool,
-    #[serde(default)]
     size: u64,
-    #[serde(default)]
-    modified: Option<String>,
+    #[serde(default, rename = "updatedAt")]
+    updated_at: Option<String>,
 }
 
 pub struct FnsBackend {
@@ -258,7 +256,7 @@ impl FileBackend for FnsBackend {
                 async move {
                     Ok(self
                         .client
-                        .get(format!("{base_url}/api/folder/files"))
+                        .get(format!("{base_url}/api/folder/notes"))
                         .query(&[("path", dir_owned.as_str()), ("vault", vault.as_str())])
                         .header("Authorization", token.as_str()))
                 }
@@ -279,9 +277,9 @@ impl FileBackend for FnsBackend {
             .into_iter()
             .map(|item| FileMeta {
                 path: item.path,
-                is_dir: item.is_dir,
+                is_dir: false,
                 size: item.size,
-                modified: item.modified.and_then(|s| s.parse::<DateTime<Utc>>().ok()),
+                modified: item.updated_at.and_then(|s| s.parse::<DateTime<Utc>>().ok()),
             })
             .collect())
     }
