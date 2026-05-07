@@ -247,7 +247,8 @@ impl FileBackend for FnsBackend {
         let base_url = self.base_url.clone();
         let token = self.auth_header().to_string();
 
-        let resp = self
+        // 1. Fetch notes in this directory
+        let notes_resp = self
             .send_with_retry(|| {
                 let vault = vault.clone();
                 let dir_owned = dir_owned.clone();
@@ -263,26 +264,66 @@ impl FileBackend for FnsBackend {
             })
             .await?;
 
-        Self::map_response_status(&resp, dir)?;
-        let json: FnsResponse = resp.json().await?;
-        Self::check_fns_code(&json)?;
+        Self::map_response_status(&notes_resp, dir)?;
+        let notes_json: FnsResponse = notes_resp.json().await?;
+        Self::check_fns_code(&notes_json)?;
 
-        debug!(dir = dir, data = ?json.data, "FNS list raw response");
-        let items: Vec<NoteListItem> = json
+        debug!(dir = dir, data = ?notes_json.data, "FNS list raw response");
+        let items: Vec<NoteListItem> = notes_json
             .data
             .and_then(|d| d.get("list").cloned())
             .and_then(|d| serde_json::from_value(d).ok())
             .unwrap_or_default();
 
-        Ok(items
+        let mut result: Vec<FileMeta> = items
             .into_iter()
             .map(|item| FileMeta {
                 path: item.path,
                 is_dir: false,
                 size: item.size,
-                modified: item.updated_at.and_then(|s| s.parse::<DateTime<Utc>>().ok()),
+                modified: item
+                    .updated_at
+                    .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
             })
-            .collect())
+            .collect();
+
+        // 2. Fetch subdirectories
+        let folders_resp = self
+            .send_with_retry(|| {
+                let vault = vault.clone();
+                let dir_owned = dir.to_string();
+                let base_url = base_url.clone();
+                let token = token.clone();
+                async move {
+                    Ok(self
+                        .client
+                        .get(format!("{base_url}/api/folders"))
+                        .query(&[("path", dir_owned.as_str()), ("vault", vault.as_str())])
+                        .header("Authorization", token.as_str()))
+                }
+            })
+            .await?;
+
+        Self::map_response_status(&folders_resp, dir)?;
+        let folders_json: FnsResponse = folders_resp.json().await?;
+        Self::check_fns_code(&folders_json)?;
+
+        let items: Vec<NoteListItem> = folders_json
+            .data
+            .and_then(|d| serde_json::from_value(d).ok())
+            .unwrap_or_default();
+        result.extend(items.into_iter().map(|item| {
+            FileMeta {
+                path: item.path,
+                is_dir: true,
+                size: item.size,
+                modified: item
+                    .updated_at
+                    .and_then(|s| s.parse::<DateTime<Utc>>().ok()),
+            }
+        }));
+
+        Ok(result)
     }
 
     async fn exists(&self, path: &str) -> Result<bool, BackendError> {
