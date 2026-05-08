@@ -2,6 +2,8 @@ use crate::types::{Error, Frontmatter, Link, LinkType, Page, Result, TimelineEnt
 use chrono::Utc;
 use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
 use std::collections::HashMap;
+use std::path::Path;
+use tracing::info;
 
 /// SQLite-backed engine for indexing pages, links, and full-text search.
 pub struct IndexEngine {
@@ -25,6 +27,17 @@ impl IndexEngine {
 
     /// Open (or create) the SQLite database and run migrations.
     pub async fn new(db_path: &str) -> Result<Self> {
+        // Ensure parent directory exists so SQLite can create the file.
+        if !db_path.contains("memory") {
+            if let Some(parent) = Path::new(db_path).parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    info!("db directory missing, creating: {}", parent.display());
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| Error::Storage(format!("create db dir: {e}")))?;
+                }
+            }
+        }
+
         let max_conn = if db_path.contains("memory") { 1 } else { 5 };
         let pool = SqlitePoolOptions::new()
             .max_connections(max_conn)
