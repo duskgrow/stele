@@ -15,10 +15,11 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" ];
         };
+        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "stele";
-          version = "0.1.5";
+          version = cargoToml.package.version;
           src = ./.;
 
           cargoLock.lockFile = ./Cargo.lock;
