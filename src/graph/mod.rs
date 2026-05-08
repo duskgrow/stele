@@ -1,0 +1,335 @@
+use crate::types::{Error, Link, LinkType, Result};
+use sqlx::SqlitePool;
+use std::collections::{HashSet, VecDeque};
+
+/// Get all outgoing links from a page.
+pub async fn get_outlinks(db: &SqlitePool, slug: &str) -> Result<Vec<Link>> {
+    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1",
+    )
+    .bind(slug)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?;
+
+    Ok(rows.into_iter().map(parse_link_row).collect())
+}
+
+/// Get all incoming links to a page.
+pub async fn get_backlinks(db: &SqlitePool, slug: &str) -> Result<Vec<Link>> {
+    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1",
+    )
+    .bind(slug)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?;
+
+    Ok(rows.into_iter().map(parse_link_row).collect())
+}
+
+/// BFS traversal from a starting page, returning (slug, distance) pairs.
+/// The start slug itself is not included in results.
+/// Cycle detection prevents infinite loops.
+pub async fn get_neighbors(
+    db: &SqlitePool,
+    slug: &str,
+    depth: usize,
+) -> Result<Vec<(String, usize)>> {
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    let mut results: Vec<(String, usize)> = Vec::new();
+
+    queue.push_back((slug.to_string(), 0));
+    visited.insert(slug.to_string());
+
+    while let Some((current, current_depth)) = queue.pop_front() {
+        if current_depth > 0 {
+            results.push((current.clone(), current_depth));
+        }
+
+        if current_depth >= depth {
+            continue;
+        }
+
+        let outlinks = get_outlinks(db, &current).await?;
+        for link in outlinks {
+            if !visited.contains(&link.target_slug) {
+                visited.insert(link.target_slug.clone());
+                queue.push_back((link.target_slug, current_depth + 1));
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Find all pages with zero inbound links.
+pub async fn find_orphans(db: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT slug FROM pages p WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.target_slug = p.slug)",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Storage(format!("find_orphans: {e}")))?;
+
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Get all unique link types present in the graph.
+pub async fn get_link_types(db: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT link_type FROM links ORDER BY link_type")
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Storage(format!("get_link_types: {e}")))?;
+
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Find pages that both slug_a and slug_b link to.
+pub async fn shared_links(db: &SqlitePool, slug_a: &str, slug_b: &str) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT target_slug FROM links WHERE source_slug = ?1
+        INTERSECT
+        SELECT target_slug FROM links WHERE source_slug = ?2
+        ORDER BY target_slug
+        "#,
+    )
+    .bind(slug_a)
+    .bind(slug_b)
+    .fetch_all(db)
+    .await
+    .map_err(|e| Error::Storage(format!("shared_links: {e}")))?;
+
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+pub(crate) fn parse_link_row(row: (String, String, String, Option<String>)) -> Link {
+    let (source_slug, target_slug, link_type_str, context_snippet) = row;
+    Link {
+        source_slug,
+        target_slug,
+        link_type: if link_type_str == "plain" {
+            LinkType::Plain
+        } else {
+            LinkType::Custom(link_type_str)
+        },
+        context_snippet,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+
+        let schema = r#"
+            CREATE TABLE IF NOT EXISTS pages (
+                slug TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                page_type TEXT NOT NULL DEFAULT '',
+                vault TEXT NOT NULL DEFAULT '',
+                content_hash TEXT NOT NULL DEFAULT '',
+                compiled_truth TEXT NOT NULL DEFAULT '',
+                raw_content TEXT NOT NULL DEFAULT '',
+                timeline_json TEXT NOT NULL DEFAULT '',
+                timeline_text TEXT NOT NULL DEFAULT '',
+                frontmatter_json TEXT NOT NULL DEFAULT '',
+                tags_json TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS links (
+                source_slug TEXT NOT NULL,
+                target_slug TEXT NOT NULL,
+                link_type TEXT NOT NULL,
+                context_snippet TEXT,
+                UNIQUE(source_slug, target_slug, link_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_slug);
+            CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_slug);
+        "#;
+
+        sqlx::raw_sql(schema)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        pool
+    }
+
+    async fn insert_page(pool: &SqlitePool, slug: &str) {
+        sqlx::query("INSERT INTO pages (slug, title) VALUES (?1, ?2)")
+            .bind(slug)
+            .bind(format!("Title for {}", slug))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_link(pool: &SqlitePool, source: &str, target: &str, link_type: &str) {
+        sqlx::query(
+            "INSERT INTO links (source_slug, target_slug, link_type) VALUES (?1, ?2, ?3)",
+        )
+        .bind(source)
+        .bind(target)
+        .bind(link_type)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_outlinks() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_page(&pool, "page-c").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+        insert_link(&pool, "page-a", "page-c", "cites").await;
+
+        let outlinks = get_outlinks(&pool, "page-a").await.unwrap();
+        assert_eq!(outlinks.len(), 2);
+        assert!(outlinks.iter().any(|l| l.target_slug == "page-b"
+            && l.link_type == LinkType::Plain));
+        assert!(outlinks.iter().any(|l| l.target_slug == "page-c"
+            && l.link_type == LinkType::Custom("cites".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_backlinks() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_page(&pool, "page-c").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+        insert_link(&pool, "page-c", "page-b", "references").await;
+
+        let backlinks = get_backlinks(&pool, "page-b").await.unwrap();
+        assert_eq!(backlinks.len(), 2);
+        assert!(backlinks.iter().any(|l| l.source_slug == "page-a"
+            && l.link_type == LinkType::Plain));
+        assert!(backlinks.iter().any(|l| l.source_slug == "page-c"
+            && l.link_type == LinkType::Custom("references".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_bfs_with_cycles() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "a", "b", "plain").await;
+        insert_link(&pool, "b", "c", "plain").await;
+        insert_link(&pool, "c", "a", "plain").await;
+
+        let neighbors = get_neighbors(&pool, "a", 5).await.unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
+        assert!(slugs.contains(&"b".to_string()));
+        assert!(slugs.contains(&"c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_bfs_depth_limit() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "a", "b", "plain").await;
+        insert_link(&pool, "b", "c", "plain").await;
+
+        let neighbors = get_neighbors(&pool, "a", 1).await.unwrap();
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].0, "b");
+        assert_eq!(neighbors[0].1, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_orphans() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_page(&pool, "page-c").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+
+        let orphans = find_orphans(&pool).await.unwrap();
+        assert_eq!(orphans.len(), 2);
+        assert!(orphans.contains(&"page-a".to_string()));
+        assert!(orphans.contains(&"page-c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_link_types() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+        insert_link(&pool, "page-b", "page-a", "cites").await;
+        insert_link(&pool, "page-a", "page-b", "references").await;
+
+        let types = get_link_types(&pool).await.unwrap();
+        assert_eq!(types.len(), 3);
+        assert!(types.contains(&"plain".to_string()));
+        assert!(types.contains(&"cites".to_string()));
+        assert!(types.contains(&"references".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_shared_links() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_page(&pool, "d").await;
+        insert_link(&pool, "a", "c", "plain").await;
+        insert_link(&pool, "a", "d", "plain").await;
+        insert_link(&pool, "b", "c", "plain").await;
+
+        let shared = shared_links(&pool, "a", "b").await.unwrap();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0], "c");
+    }
+
+    #[tokio::test]
+    async fn test_empty_graph() {
+        let pool = setup_test_db().await;
+
+        let outlinks = get_outlinks(&pool, "nonexistent").await.unwrap();
+        assert!(outlinks.is_empty());
+
+        let backlinks = get_backlinks(&pool, "nonexistent").await.unwrap();
+        assert!(backlinks.is_empty());
+
+        let neighbors = get_neighbors(&pool, "nonexistent", 3).await.unwrap();
+        assert!(neighbors.is_empty());
+
+        let orphans = find_orphans(&pool).await.unwrap();
+        assert!(orphans.is_empty());
+
+        let types = get_link_types(&pool).await.unwrap();
+        assert!(types.is_empty());
+
+        let shared = shared_links(&pool, "a", "b").await.unwrap();
+        assert!(shared.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_no_links() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+
+        let outlinks = get_outlinks(&pool, "page-a").await.unwrap();
+        assert!(outlinks.is_empty());
+    }
+}

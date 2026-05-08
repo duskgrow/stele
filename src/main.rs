@@ -3,83 +3,79 @@ use std::sync::Arc;
 use clap::Parser;
 use tracing::info;
 
-use wikiops::config;
-use wikiops::mcp::resources::ResourceRegistry;
-use wikiops::mcp::server::McpServer;
-use wikiops::mcp::transport::run_server;
-use wikiops::services::tools::ToolRegistry;
-use wikiops::storage::fns::FnsBackend;
-use wikiops::storage::sqlite::SqliteBackend;
-
-#[derive(Parser)]
-#[command(name = "wikiops", version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(clap::Subcommand)]
-enum Commands {
-    /// Start the MCP server
-    Serve {
-        /// Path to config file
-        #[arg(short, long)]
-        config: Option<String>,
-    },
-}
+use stele::cli::{Commands, SteleCli};
+use stele::config::Config;
+use stele::fns::FnsClient;
+use stele::index::IndexEngine;
+use stele::ops::OperationRegistry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = match SteleCli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            let code = if e.use_stderr() { 2 } else { 0 };
+            eprintln!("{}", e);
+            std::process::exit(code);
+        }
+    };
+
+    let config = Config::load().map_err(|e| anyhow::anyhow!("config load failed: {e}"))?;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    info!("stele v{} starting", env!("CARGO_PKG_VERSION"));
+    info!("config loaded");
+
+    let fns = FnsClient::new(
+        config.fns.base_url.clone(),
+        config.fns.token.clone(),
+        config.fns.vault.clone(),
+    );
+    info!("FNS client created");
+
+    let index = IndexEngine::new(&config.index.db_path).await?;
+    info!("index engine initialized");
+
+    let registry = Arc::new(OperationRegistry::new(
+        Arc::new(fns),
+        Arc::new(index),
+        config.clone(),
+    ));
 
     match cli.command {
-        Commands::Serve { config } => {
-            let config = config::Config::load(config.as_deref())?;
-
-            tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-
-            info!("wikiops MCP server starting");
-
-            let fns_backend = Arc::new(FnsBackend::new(
-                config.storage.fns.base_url.clone(),
-                config.storage.fns.api_token.clone(),
-                config.storage.fns.default_vault.clone(),
-            ));
-
-            let sqlite_backend = Arc::new(SqliteBackend::new(&config.index.db_path).await?);
-
-            info!("SQLite backend initialized with migrations");
-
-            let tool_registry = Arc::new(
-                ToolRegistry::new(sqlite_backend)
-                    .with_file_backend(fns_backend.clone())
-                    .with_vault(config.storage.fns.default_vault.clone()),
-            );
-
-            let resource_registry = Arc::new(ResourceRegistry::new(fns_backend.clone()));
-
-            let mcp_server = Arc::new(McpServer::new(
-                tool_registry,
-                resource_registry,
-                fns_backend,
-            ));
-
-            info!(
-                "wikiops v{} ready — listening on {}:{}",
-                env!("CARGO_PKG_VERSION"),
-                config.server.host,
-                config.server.port
-            );
-
-            run_server(
-                mcp_server,
-                config.mcp,
-                &config.server.host,
-                config.server.port,
-            )
-            .await?;
+        Commands::Serve { transport, port } => {
+            if transport == "stdio" {
+                info!("starting MCP server on stdio transport");
+                tokio::select! {
+                    result = stele::mcp::stdio::run_stdio(registry) => {
+                        result.map_err(|e| anyhow::anyhow!("stdio server error: {e}"))?;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        info!("Received SIGINT, shutting down gracefully");
+                    }
+                }
+            } else if transport == "http" {
+                let host = &config.server.host;
+                info!("starting MCP HTTP server on {}:{}", host, port);
+                tokio::select! {
+                    result = stele::mcp::http::run_http(registry, host, port) => {
+                        result.map_err(|e| anyhow::anyhow!("http server error: {e}"))?;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        info!("Received SIGINT, shutting down gracefully");
+                    }
+                }
+            } else {
+                anyhow::bail!("unknown transport: {}", transport);
+            }
+        }
+        _ => {
+            stele::cli::run_cli(registry)
+                .await
+                .map_err(|e| anyhow::anyhow!("cli error: {e}"))?;
         }
     }
 

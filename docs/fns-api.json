@@ -1,0 +1,486 @@
+{
+  "_meta": {
+    "title": "FNS (Fast Note Sync) API Reference",
+    "source": "OpenAPI 2.0 spec from http://localhost:9000/openapi.json + live API verification",
+    "generated": "2026-05-08",
+    "base_url": "http://localhost:9000",
+    "total_endpoints": 71,
+    "scope": "Note, Folder, and related endpoints needed by stele"
+  },
+
+  "authentication": {
+    "method": "Custom header",
+    "header_name": "token",
+    "header_format": "token: <raw_token_value>",
+    "notes": [
+      "NOT 'Authorization: Bearer <token>' — the server expects a plain 'token' header",
+      "The token is a JWT (HS256), signed with the key in FNS config security.auth-token-key",
+      "Token payload contains uid, iat, exp fields",
+      "Error code 307 = 'Not logged in' (no token or wrong format)",
+      "Error code 308 = 'Session expired' (token parsed but server rejected)"
+    ],
+    "example": "curl -H 'token: eyJhbGci...' http://localhost:9000/api/note?vault=forge&path=hello.md"
+  },
+
+  "response_envelope": {
+    "description": "All endpoints return this wrapper object",
+    "schema": {
+      "code": "integer — 1 = success, other values = error",
+      "status": "boolean — true on success",
+      "message": "string — 'Success' on success, error description on failure",
+      "data": "any — the actual payload, type varies by endpoint",
+      "context": "any — optional additional context",
+      "vault": "any — optional vault info"
+    },
+    "success_example": {
+      "code": 1,
+      "status": true,
+      "message": "Success",
+      "data": {}
+    },
+    "error_examples": [
+      {"code": 304, "message": "找不到API", "note": "Endpoint does not exist"},
+      {"code": 305, "message": "Invalid Params", "note": "Missing or wrong parameters"},
+      {"code": 307, "message": "Not logged in", "note": "No token or wrong format"},
+      {"code": 308, "message": "Session expired", "note": "Token rejected by server"},
+      {"code": 430, "message": "Note does not exist", "note": "Path correct but file missing"}
+    ],
+    "verified_live": true,
+    "verified_success_code": 1
+  },
+
+  "endpoints": {
+
+    "GET /api/note": {
+      "summary": "Get note details",
+      "tag": "Note",
+      "parameters": {
+        "vault":   {"in": "query", "type": "string",  "required": true,  "description": "Vault name"},
+        "path":    {"in": "query", "type": "string",  "required": true,  "description": "Note path (e.g. 'wiki/index.md')"},
+        "pathHash":{"in": "query", "type": "string",  "required": false, "description": "Path hash (optional optimization)"},
+        "isRecycle":{"in":"query", "type": "boolean", "required": false, "description": "Whether to look in recycle bin"}
+      },
+      "response_data_schema": "dto.NoteWithFileLinksResponse",
+      "response_data_fields": {
+        "path":        "string — note path",
+        "pathHash":    "string — path hash",
+        "content":     "string — full markdown content (including frontmatter)",
+        "contentHash": "string — content hash for change detection",
+        "fileLinks":   "object — map of file link to actual path",
+        "version":     "integer — version number",
+        "ctime":       "integer — creation timestamp (ms since epoch)",
+        "mtime":       "integer — modification timestamp (ms since epoch)",
+        "lastTime":    "integer — last record update timestamp (ms since epoch)",
+        "updatedAt":   "string — human-readable update time",
+        "createdAt":   "string — human-readable creation time"
+      },
+      "live_verified_response": {
+        "code": 1,
+        "status": true,
+        "message": "Success",
+        "data": {
+          "path": "prompts/ingest.md",
+          "pathHash": "-549858591",
+          "content": "---\nname: ingest\n...\n",
+          "contentHash": "1980254648",
+          "fileLinks": {},
+          "version": 2,
+          "ctime": 1778000138021,
+          "mtime": 1778000138021,
+          "lastTime": 1778075060808,
+          "updatedAt": "2026-05-06 21:44:20",
+          "createdAt": "2026-05-06 21:44:20"
+        }
+      }
+    },
+
+    "POST /api/note": {
+      "summary": "Create or update note",
+      "tag": "Note",
+      "content_type": "application/json",
+      "body_schema": "dto.NoteModifyOrCreateRequest",
+      "body_fields": {
+        "vault":          {"type": "string",  "required": true,  "description": "Vault name"},
+        "path":           {"type": "string",  "required": true,  "description": "Note path"},
+        "content":        {"type": "string",  "required": false, "description": "Full markdown content"},
+        "contentHash":    {"type": "string",  "required": false, "description": "Content hash"},
+        "baseHash":       {"type": "string",  "required": false, "description": "Base hash for sync conflict detection"},
+        "baseHashMissing":{"type": "boolean", "required": false, "description": "Mark if baseHash is unavailable"},
+        "createOnly":     {"type": "boolean", "required": false, "description": "If true, fail if note already exists"},
+        "ctime":          {"type": "integer", "required": false, "description": "Creation timestamp (ms)"},
+        "mtime":          {"type": "integer", "required": false, "description": "Modification timestamp (ms)"},
+        "pathHash":       {"type": "string",  "required": false, "description": "Path hash"}
+      },
+      "response_data_schema": "dto.NoteDTO",
+      "notes": [
+        "Request body is JSON, NOT raw markdown",
+        "vault and path go in the JSON body, NOT as query parameters",
+        "Response returns the created/updated NoteDTO with server-assigned fields"
+      ]
+    },
+
+    "DELETE /api/note": {
+      "summary": "Delete note",
+      "tag": "Note",
+      "parameters": {
+        "vault":   {"in": "query", "type": "string",  "required": true, "description": "Vault name"},
+        "path":    {"in": "query", "type": "string",  "required": true, "description": "Note path"},
+        "pathHash":{"in": "query", "type": "string",  "required": false,"description": "Path hash"}
+      },
+      "response_data_schema": "dto.NoteDTO"
+    },
+
+    "POST /api/note/append": {
+      "summary": "Append content to note",
+      "tag": "Note",
+      "content_type": "application/json",
+      "body_schema": "dto.NoteAppendRequest",
+      "body_fields": {
+        "vault":   {"type": "string", "required": true, "description": "Vault name"},
+        "path":    {"type": "string", "required": true, "description": "Note path"},
+        "content": {"type": "string", "required": true, "description": "Content to append"},
+        "pathHash":{"type": "string", "required": false,"description": "Path hash"}
+      },
+      "response_data_schema": "dto.NoteDTO",
+      "notes": [
+        "Request body is JSON with vault, path, content fields",
+        "Content is appended to the END of the existing note"
+      ]
+    },
+
+    "POST /api/note/prepend": {
+      "summary": "Prepend content to note",
+      "tag": "Note",
+      "content_type": "application/json",
+      "notes": ["Same body format as append, but content is prepended to the BEGINNING"]
+    },
+
+    "POST /api/note/replace": {
+      "summary": "Find and replace in note",
+      "tag": "Note",
+      "content_type": "application/json",
+      "notes": ["Search and replace within a note's content"]
+    },
+
+    "POST /api/note/rename": {
+      "summary": "Rename note",
+      "tag": "Note",
+      "content_type": "application/json"
+    },
+
+    "PATCH /api/note/frontmatter": {
+      "summary": "Modify note frontmatter",
+      "tag": "Note",
+      "content_type": "application/json",
+      "notes": ["Update only the YAML frontmatter without touching the body"]
+    },
+
+    "GET /api/note/backlinks": {
+      "summary": "Get notes that link TO this note",
+      "tag": "Note",
+      "parameters": {
+        "vault":   {"in": "query", "type": "string", "required": true,  "description": "Vault name"},
+        "path":    {"in": "query", "type": "string", "required": true,  "description": "Note path"},
+        "pathHash":{"in": "query", "type": "string", "required": false, "description": "Path hash"}
+      },
+      "response_data_schema": "dto.NoteLinkItem[]",
+      "response_item_fields": {
+        "path":     "string — source note path that contains the link",
+        "context":  "string — text context around the link",
+        "isEmbed":  "boolean — whether it's an embed (![[...]])",
+        "linkText": "string — raw link text (optional)"
+      },
+      "live_verified": true,
+      "notes": [
+        "FNS maintains its own link graph by scanning wikilinks in notes",
+        "Returns null data if no backlinks exist"
+      ]
+    },
+
+    "GET /api/note/outlinks": {
+      "summary": "Get notes that this note links TO",
+      "tag": "Note",
+      "parameters": {
+        "vault":   {"in": "query", "type": "string", "required": true,  "description": "Vault name"},
+        "path":    {"in": "query", "type": "string", "required": true,  "description": "Note path"},
+        "pathHash":{"in": "query", "type": "string", "required": false, "description": "Path hash"}
+      },
+      "response_data_schema": "dto.NoteLinkItem[]",
+      "live_verified": true
+    },
+
+    "GET /api/note/histories": {
+      "summary": "Get note version history list",
+      "tag": "Note History",
+      "parameters": {
+        "vault": {"in": "query", "type": "string", "required": true, "description": "Vault name"},
+        "path":  {"in": "query", "type": "string", "required": true, "description": "Note path"}
+      }
+    },
+
+    "GET /api/note/history": {
+      "summary": "Get specific history version details",
+      "tag": "Note History"
+    },
+
+    "PUT /api/note/history/restore": {
+      "summary": "Restore note from history version",
+      "tag": "Note History"
+    },
+
+    "GET /api/notes": {
+      "summary": "List all notes in vault (with search)",
+      "tag": "Note",
+      "parameters": {
+        "vault":        {"in": "query", "type": "string",  "required": true,  "description": "Vault name"},
+        "keyword":      {"in": "query", "type": "string",  "required": false, "description": "Search keyword"},
+        "searchMode":   {"in": "query", "type": "string",  "required": false, "description": "Search mode: 'path' or 'content'"},
+        "searchContent":{"in": "query", "type": "boolean", "required": false, "description": "Whether to search content"},
+        "sortBy":       {"in": "query", "type": "string",  "required": false, "description": "Sort by field"},
+        "sortOrder":    {"in": "query", "type": "string",  "required": false, "description": "Sort order"},
+        "page":         {"in": "query", "type": "integer", "required": false, "description": "Page number"},
+        "pageSize":     {"in": "query", "type": "integer", "required": false, "description": "Page size"},
+        "paths":        {"in": "query", "type": "string",  "required": false, "description": "Comma-separated exact path list for share filter"},
+        "isRecycle":    {"in": "query", "type": "boolean", "required": false, "description": "Include recycled notes"}
+      },
+      "response_data_schema": "app.ListRes<dto.NoteNoContentDTO>",
+      "response_data_structure": {
+        "list": "dto.NoteNoContentDTO[] — array of notes WITHOUT content field",
+        "pager": {
+          "page": "integer — current page number",
+          "pageSize": "integer — items per page",
+          "totalRows": "integer — total matching notes"
+        }
+      },
+      "note_item_fields": {
+        "path":        "string — note path",
+        "pathHash":    "string — path hash",
+        "contentHash": "string — content hash",
+        "size":        "integer — note size",
+        "version":     "integer — version number",
+        "ctime":       "integer — creation timestamp (ms)",
+        "mtime":       "integer — modification timestamp (ms)",
+        "lastTime":    "integer — last record update timestamp (ms)",
+        "updatedAt":   "string — human-readable update time",
+        "createdAt":   "string — human-readable creation time"
+      },
+      "notes": [
+        "This lists ALL notes across the entire vault, not just one folder",
+        "Use keyword + searchMode for server-side search",
+        "Pagination via page/pageSize"
+      ]
+    },
+
+    "GET /api/folder/notes": {
+      "summary": "List notes in a specific folder",
+      "tag": "Folder",
+      "parameters": {
+        "vault":    {"in": "query", "type": "string",  "required": true,  "description": "Vault name"},
+        "path":     {"in": "query", "type": "string",  "required": false, "description": "Folder path (omit or use '.' for root)"},
+        "pathHash": {"in": "query", "type": "string",  "required": false, "description": "Path hash"},
+        "sortBy":   {"in": "query", "type": "string",  "required": false, "description": "Sort by field"},
+        "sortOrder":{"in": "query", "type": "string",  "required": false, "description": "Sort order"},
+        "page":     {"in": "query", "type": "integer", "required": false, "description": "Page number"},
+        "pageSize": {"in": "query", "type": "integer", "required": false, "description": "Page size"}
+      },
+      "response_data_schema": "app.ListRes<dto.NoteDTO>",
+      "response_data_structure": {
+        "list": "dto.NoteDTO[] — array of notes WITH content field",
+        "pager": {"page": "integer", "pageSize": "integer", "totalRows": "integer"}
+      },
+      "live_verified_response": {
+        "code": 1,
+        "status": true,
+        "message": "Success",
+        "data": {"list": null, "pager": {"page": 1, "pageSize": 10, "totalRows": 0}}
+      },
+      "notes": [
+        "Returns notes in ONE folder only, not recursive",
+        "list can be null (not empty array) when folder has no notes",
+        "path=. for root directory (NOT path=/)",
+        "Does NOT return subdirectories — use /api/folders for that"
+      ]
+    },
+
+    "GET /api/folder/files": {
+      "summary": "List file attachments in a folder",
+      "tag": "Folder",
+      "parameters": {
+        "vault":    {"in": "query", "type": "string",  "required": true,  "description": "Vault name"},
+        "path":     {"in": "query", "type": "string",  "required": false, "description": "Folder path"},
+        "pathHash": {"in": "query", "type": "string",  "required": false, "description": "Path hash"},
+        "sortBy":   {"in": "query", "type": "string",  "required": false, "description": "Sort by field"},
+        "sortOrder":{"in": "query", "type": "string",  "required": false, "description": "Sort order"},
+        "page":     {"in": "query", "type": "integer", "required": false, "description": "Page number"},
+        "pageSize": {"in": "query", "type": "integer", "required": false, "description": "Page size"}
+      },
+      "response_data_schema": "app.ListRes<dto.FileDTO>",
+      "notes": [
+        "Lists file attachments (images, PDFs, etc.), NOT markdown notes",
+        "For markdown notes, use /api/folder/notes instead"
+      ]
+    },
+
+    "GET /api/folders": {
+      "summary": "List direct child folders",
+      "tag": "Folder",
+      "parameters": {
+        "vault":   {"in": "query", "type": "string", "required": true,  "description": "Vault name"},
+        "path":    {"in": "query", "type": "string", "required": false, "description": "Parent folder path ('.' for root)"},
+        "pathHash":{"in": "query", "type": "string", "required": false, "description": "Path hash"}
+      },
+      "response_data_schema": "dto.FolderDTO[]",
+      "response_item_fields": {
+        "path":      "string — folder path (e.g. 'wiki', 'skills/prompts')",
+        "pathHash":  "string — path hash",
+        "ctime":     "integer — creation timestamp (ms)",
+        "mtime":     "integer — modification timestamp (ms)",
+        "lastTime":  "integer — last record update timestamp (ms)",
+        "updatedAt": "string — human-readable update time",
+        "createdAt": "string — human-readable creation time"
+      },
+      "live_verified_response": {
+        "code": 1,
+        "status": true,
+        "message": "Success",
+        "data": [
+          {"path": ".archive", "pathHash": "2111762644", "ctime": 1778047879005, "mtime": 1778047879005, "lastTime": 1778047879005, "updatedAt": "2026-05-06 14:11:19", "createdAt": "2026-05-06 14:11:19"},
+          {"path": "prompts",  "pathHash": "-309210225", "ctime": 1778075060754, "mtime": 1778075060754, "lastTime": 1778075060754, "updatedAt": "2026-05-06 21:44:20", "createdAt": "2026-05-06 21:44:20"},
+          {"path": "skills",   "pathHash": "-900562878", "ctime": 1777998758177, "mtime": 1777998758177, "lastTime": 1777998758178, "updatedAt": "2026-05-06 00:32:38", "createdAt": "2026-05-06 00:32:38"},
+          {"path": "test",     "pathHash": "3556498",    "ctime": 1778048373717, "mtime": 1778048373717, "lastTime": 1778048373717, "updatedAt": "2026-05-06 14:19:33", "createdAt": "2026-05-05 07:13:50"}
+        ]
+      },
+      "notes": [
+        "Returns DIRECT child folders only, not nested",
+        "data is a flat array (not wrapped in list/pager like folder/notes)",
+        "Use /api/folder/tree for nested directory structure"
+      ]
+    },
+
+    "GET /api/folder/tree": {
+      "summary": "Get entire vault directory tree",
+      "tag": "Folder",
+      "parameters": {
+        "vault": {"in": "query", "type": "string",  "required": true,  "description": "Vault name"},
+        "depth": {"in": "query", "type": "integer", "required": false, "description": "Tree depth limit (default: unlimited)"}
+      },
+      "response_data_schema": "dto.FolderTreeResponse",
+      "response_data_fields": {
+        "folders": "dto.FolderTreeNode[] — top-level folder nodes",
+        "rootFileCount": "integer — file count in root",
+        "rootNoteCount": "integer — note count in root"
+      },
+      "tree_node_fields": {
+        "path":      "string — node path",
+        "name":      "string — node display name",
+        "noteCount": "integer — notes in this folder",
+        "fileCount": "integer — files in this folder",
+        "children":  "dto.FolderTreeNode[] — nested child folders (recursive)"
+      }
+    },
+
+    "GET /api/folder": {
+      "summary": "Get folder info",
+      "tag": "Folder",
+      "parameters": {
+        "vault": {"in": "query", "type": "string", "required": true, "description": "Vault name"},
+        "path":  {"in": "query", "type": "string", "required": true, "description": "Folder path"}
+      }
+    },
+
+    "POST /api/folder": {
+      "summary": "Create folder",
+      "tag": "Folder"
+    },
+
+    "DELETE /api/folder": {
+      "summary": "Delete folder",
+      "tag": "Folder"
+    }
+  },
+
+  "stele_vs_fns_comparison": {
+    "_note": "Concrete differences between what stele implements and what FNS actually provides",
+
+    "authentication": {
+      "stele_uses": "Authorization: Bearer <token>",
+      "fns_expects": "token: <raw_token>",
+      "impact": "All requests rejected with code 307 'Not logged in'"
+    },
+
+    "success_code": {
+      "stele_checks": "code == 0",
+      "fns_returns": "code == 1",
+      "impact": "Every successful API response parsed as error"
+    },
+
+    "get_note_url": {
+      "stele_uses": "GET /api/v1/note/{vault}/{path}",
+      "fns_expects": "GET /api/note?vault={vault}&path={path}",
+      "impact": "404 or 304 — endpoint not found"
+    },
+
+    "get_note_response": {
+      "stele_expects": "data is a raw markdown string",
+      "fns_returns": "data is NoteWithFileLinksResponse object with .content field",
+      "impact": "v.as_str() fails — cannot extract content from object"
+    },
+
+    "put_note_url": {
+      "stele_uses": "PUT /api/v1/note/{vault}/{path} with raw markdown body",
+      "fns_expects": "POST /api/note with JSON body {vault, path, content, ...}",
+      "impact": "Wrong method (PUT vs POST) + wrong body format (raw vs JSON)"
+    },
+
+    "append_note_url": {
+      "stele_uses": "POST /api/v1/note/{vault}/{path}/append with raw body",
+      "fns_expects": "POST /api/note/append with JSON body {vault, path, content}",
+      "impact": "Wrong URL structure + wrong body format"
+    },
+
+    "delete_note_url": {
+      "stele_uses": "DELETE /api/v1/note/{vault}/{path}",
+      "fns_expects": "DELETE /api/note?vault={vault}&path={path}",
+      "impact": "404 — endpoint not found"
+    },
+
+    "list_notes_url": {
+      "stele_uses": "GET /api/v1/note/{vault}/{dir}",
+      "fns_expects": "GET /api/folder/notes?vault={vault}&path={dir}",
+      "impact": "Completely different endpoint path"
+    },
+
+    "list_notes_response": {
+      "stele_expects": "data is Vec<String> of filenames",
+      "fns_returns": "data is {list: NoteDTO[], pager: {page, pageSize, totalRows}}",
+      "impact": "Deserialization fails — wrong type + nested structure"
+    },
+
+    "list_folders_url": {
+      "stele_uses": "GET /api/v1/folder/{vault}/{dir}",
+      "fns_expects": "GET /api/folders?vault={vault}&path={dir}",
+      "impact": "Wrong URL structure"
+    },
+
+    "list_folders_response": {
+      "stele_expects": "data is Vec<String> of folder names",
+      "fns_returns": "data is Vec<FolderDTO> with {path, pathHash, ctime, mtime, ...}",
+      "impact": "Deserialization fails — objects vs strings"
+    }
+  },
+
+  "available_but_unused_fns_endpoints": {
+    "_note": "FNS provides these endpoints that stele doesn't use but could benefit from",
+
+    "GET /api/note/backlinks": "Server-side backlink lookup — FNS already maintains a link graph",
+    "GET /api/note/outlinks": "Server-side outgoing link lookup",
+    "POST /api/note/prepend": "Prepend content to beginning of note",
+    "POST /api/note/replace": "Find and replace within note content",
+    "PATCH /api/note/frontmatter": "Update only YAML frontmatter without touching body",
+    "POST /api/note/rename": "Rename/move a note",
+    "GET /api/notes": "List all notes across entire vault with keyword search and pagination",
+    "GET /api/note/histories": "Note version history",
+    "PUT /api/note/history/restore": "Restore note from previous version",
+    "GET /api/folder/tree": "Full directory tree with nested children"
+  }
+}

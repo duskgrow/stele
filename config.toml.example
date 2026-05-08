@@ -1,29 +1,30 @@
-# wikiops configuration file
-# Place this file at ~/.config/wikiops/config.toml
-# or specify a custom path via --config CLI arg or MY_BRAIN_CONFIG env var.
+# stele configuration file
+# Place at ~/.config/stele/config.toml or ./config.toml
+# Or set STELE_CONFIG=/path/to/config.toml
+#
+# All values can be overridden via environment variables:
+#   STELE_SERVER_HOST, STELE_SERVER_PORT,
+#   STELE_FNS_BASE_URL, STELE_FNS_TOKEN, STELE_FNS_VAULT,
+#   STELE_INDEX_DB_PATH
 
 [server]
-# Bind address
-host = "0.0.0.0"
-# Bind port
-port = 8080
+# Host to bind the HTTP server on
+host = "127.0.0.1"
 
-[mcp]
-# Streamable HTTP endpoint path
-endpoint = "/mcp"
-# API Key (optional, for simple authentication)
-api_key = "your-api-key-here"
+# Port for the HTTP server
+port = 3000
 
-[storage.fns]
-# FNS server base URL
-base_url = "http://localhost:9000"
-# FNS API authentication token
-api_token = "eyJhbGciOiJIUzI1NiIs..."
-# Default vault name
-default_vault = "forge"
+[fns]
+# Base URL of the FNS (vault) server
+base_url = "http://localhost:3000"
+
+# API token for FNS authentication
+token = ""
+
+# Vault name to use on the FNS server
+vault = "default"
 
 [index]
-# SQLite database path (default: ~/.local/share/wikiops/brain.db)
-db_path = "/var/lib/wikiops/brain.db"
-# Embedding dimension (OpenAI text-embedding-3-small = 1536)
-embedding_dim = 1536
+# Path to the SQLite database file
+# Supports ~ expansion to the user's home directory
+db_path = "~/.local/share/stele/index.db"

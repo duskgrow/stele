@@ -1,5 +1,5 @@
 {
-  description = "wikiops — MCP tool server for AI knowledge bases";
+  description = "stele — agent knowledge storage/retrieval infrastructure";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,8 +17,8 @@
         };
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "wikiops";
-          version = "0.1.0";
+          pname = "stele";
+          version = "0.1.5";
           src = ./.;
 
           cargoLock.lockFile = ./Cargo.lock;
@@ -36,9 +36,9 @@
           doCheck = false;
 
           meta = with pkgs.lib; {
-            description = "MCP tool server for AI knowledge bases";
+            description = "stele — agent knowledge storage/retrieval infrastructure";
             license = licenses.mit;
-            mainProgram = "wikiops";
+            mainProgram = "stele";
           };
         };
 
@@ -47,6 +47,7 @@
             rustToolchain
             pkgs.cargo-watch
             pkgs.cargo-edit
+            pkgs.cargo-llvm-cov
             pkgs.pkg-config
             pkgs.openssl
           ];

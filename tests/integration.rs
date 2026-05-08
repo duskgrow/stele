@@ -1,662 +1,746 @@
 use std::sync::Arc;
 
-use chrono::NaiveDate;
-use serde_json::{Value, json};
+use serde_json::json;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use wikiops::mcp::protocol::{JsonRpcError, JsonRpcRequest};
-use wikiops::mcp::resources::ResourceRegistry;
-use wikiops::mcp::server::McpServer;
-use wikiops::models::{Frontmatter, Link, Page, PageType};
-use wikiops::services::tools::ToolRegistry;
-use wikiops::storage::{BackendError, FileBackend, FileMeta, FileStat};
-use wikiops::storage::sqlite::SqliteBackend;
+use stele::config::{Config, FnsConfig, IndexConfig, ServerConfig};
+use stele::fns::FnsClient;
+use stele::index::IndexEngine;
+use stele::ops::{Operation, OperationRegistry};
 
-struct NoopBackend;
-
-#[async_trait::async_trait]
-impl FileBackend for NoopBackend {
-    async fn get(&self, _: &str) -> Result<String, BackendError> {
-        Err(BackendError::NotFound("noop".into()))
-    }
-    async fn put(&self, _: &str, _: &str) -> Result<(), BackendError> {
-        Ok(())
-    }
-    async fn append(&self, _: &str, _: &str) -> Result<(), BackendError> {
-        Ok(())
-    }
-    async fn delete(&self, _: &str) -> Result<(), BackendError> {
-        Ok(())
-    }
-    async fn list(&self, _: &str) -> Result<Vec<FileMeta>, BackendError> {
-        Ok(vec![])
-    }
-    async fn exists(&self, _: &str) -> Result<bool, BackendError> {
-        Ok(false)
-    }
-    async fn stat(&self, _: &str) -> Result<FileStat, BackendError> {
-        Err(BackendError::NotFound("noop".into()))
-    }
-}
-
-async fn in_memory_db() -> SqliteBackend {
-    SqliteBackend::new(":memory:")
-        .await
-        .expect("creating in-memory SQLite backend")
-}
-
-async fn test_mcp_server() -> McpServer {
-    let db = Arc::new(in_memory_db().await);
-    let tool_registry = Arc::new(ToolRegistry::new(db));
-    let file_backend = Arc::new(NoopBackend);
-    let resource_registry = Arc::new(ResourceRegistry::new(file_backend.clone()));
-    McpServer::new(tool_registry, resource_registry, file_backend)
-}
-
-fn make_request(method: &str, id: Option<Value>, params: Option<Value>) -> JsonRpcRequest {
-    JsonRpcRequest {
-        jsonrpc: "2.0".into(),
-        id,
-        method: method.into(),
-        params,
-    }
-}
-
-fn sample_page(slug: &str, title: &str, page_type: PageType, compiled_truth: &str) -> Page {
-    Page {
-        slug: slug.to_string(),
-        vault: "forge".to_string(),
-        frontmatter: Frontmatter {
-            r#type: page_type,
-            title: title.to_string(),
-            tags: vec!["test".to_string()],
-            related: vec![],
-            sources: vec![],
-            date: NaiveDate::from_ymd_opt(2026, 5, 5).unwrap(),
-            status: None,
+fn test_config(fns_url: &str) -> Config {
+    Config {
+        server: ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 8080,
         },
-        compiled_truth: compiled_truth.to_string(),
-        timeline: vec![],
-        content_hash: format!("sha256:{}", slug),
-        raw_content: format!("# {}", title),
+        fns: FnsConfig {
+            base_url: fns_url.to_string(),
+            token: "test-token".into(),
+            vault: "test-vault".into(),
+        },
+        index: IndexConfig {
+            db_path: "sqlite::memory:".into(),
+        },
     }
 }
 
-#[tokio::test]
-async fn test_mcp_initialize_handshake() {
-    let server = test_mcp_server().await;
-
-    let req = make_request(
-        "initialize",
-        Some(json!(1)),
-        Some(json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": { "name": "integration-test", "version": "0.1" }
-        })),
-    );
-
-    let resp = server.handle(req).await.unwrap();
-
-    assert_eq!(resp.jsonrpc, "2.0");
-    assert_eq!(resp.id, Some(json!(1)));
-    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
-
-    let result = resp.result.unwrap();
-    assert_eq!(result["protocolVersion"], "2024-11-05");
-    assert_eq!(result["serverInfo"]["name"], "wikiops");
-    assert_eq!(result["serverInfo"]["version"], "0.1.0");
-    assert!(result["capabilities"]["tools"].is_object());
-    assert!(result["capabilities"]["resources"].is_object());
-    assert!(result["capabilities"]["prompts"].is_object());
-}
-
-#[tokio::test]
-async fn test_tools_list_returns_all_tools() {
-    let server = test_mcp_server().await;
-
-    let req = make_request("tools/list", Some(json!(2)), None);
-    let resp = server.handle(req).await.unwrap();
-
-    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
-    let result = resp.result.unwrap();
-    let tools = result["tools"].as_array().unwrap();
-
-    let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-
-    assert!(tool_names.contains(&"brain_search"), "missing brain_search");
-    assert!(tool_names.contains(&"brain_stats"), "missing brain_stats");
-    assert!(tool_names.contains(&"brain_maintain"), "missing brain_maintain");
-    assert!(tool_names.contains(&"brain_append"), "missing brain_append");
-    assert!(tool_names.contains(&"brain_list"), "missing brain_list");
-    assert!(tool_names.contains(&"brain_sync"), "missing brain_sync");
-    assert!(tool_names.contains(&"brain_query"), "missing brain_query");
-
-    for tool in tools {
-        assert!(tool["name"].is_string());
-        assert!(tool["description"].is_string());
-        assert!(tool["inputSchema"].is_object());
-    }
-}
-
-#[tokio::test]
-async fn test_brain_put_indexes_page_in_sqlite() {
-    let db = in_memory_db().await;
-
-    let page = sample_page(
-        "wiki/entities/rust",
-        "Rust Programming Language",
-        PageType::Entity,
-        "Rust is a systems programming language focused on safety and performance.",
-    );
-
-    db.index_page(&page).await.unwrap();
-
-    let row = db.get_page("wiki/entities/rust").await.unwrap();
-    assert!(row.is_some(), "page should be indexed");
-
-    let row = row.unwrap();
-    assert_eq!(row.slug, "wiki/entities/rust");
-    assert_eq!(row.title, "Rust Programming Language");
-    assert_eq!(row.page_type, "entity");
-    assert_eq!(row.vault, "forge");
-    assert_eq!(
-        row.compiled_truth.as_deref(),
-        Some("Rust is a systems programming language focused on safety and performance.")
-    );
-}
-
-#[tokio::test]
-async fn test_brain_get_retrieves_indexed_page() {
-    let db = in_memory_db().await;
-
-    let page = sample_page(
-        "wiki/concepts/memory-safety",
-        "Memory Safety",
-        PageType::Concept,
-        "Memory safety ensures programs do not access invalid memory.",
-    );
-
-    db.index_page(&page).await.unwrap();
-
-    let row = db.get_page("wiki/concepts/memory-safety").await.unwrap();
-    assert!(row.is_some());
-
-    let row = row.unwrap();
-    assert_eq!(row.slug, "wiki/concepts/memory-safety");
-    assert_eq!(row.title, "Memory Safety");
-    assert_eq!(row.page_type, "concept");
-    assert!(row.created_at.len() > 0);
-    assert!(row.updated_at.len() > 0);
-}
-
-#[tokio::test]
-async fn test_brain_get_nonexistent_returns_none() {
-    let db = in_memory_db().await;
-
-    let row = db.get_page("wiki/does-not-exist").await.unwrap();
-    assert!(row.is_none());
-}
-
-#[tokio::test]
-async fn test_brain_put_then_get_roundtrip() {
-    let db = in_memory_db().await;
-
-    let pages = vec![
-        sample_page("wiki/a", "Alpha", PageType::Entity, "Alpha content"),
-        sample_page("wiki/b", "Beta", PageType::Concept, "Beta content"),
-        sample_page("wiki/c", "Gamma", PageType::Source, "Gamma content"),
-    ];
-
-    for page in &pages {
-        db.index_page(page).await.unwrap();
-    }
-
-    for page in &pages {
-        let row = db.get_page(&page.slug).await.unwrap();
-        assert!(row.is_some(), "page {} should exist", page.slug);
-        assert_eq!(row.unwrap().title, page.frontmatter.title);
-    }
-}
-
-#[tokio::test]
-async fn test_brain_search_finds_indexed_content() {
-    let db = in_memory_db().await;
-
-    db.index_page(&sample_page(
-        "wiki/quantum",
-        "Quantum Computing",
-        PageType::Entity,
-        "Quantum computing uses qubits for computation.",
-    ))
-    .await
-    .unwrap();
-
-    db.index_page(&sample_page(
-        "wiki/classical",
-        "Classical Computing",
-        PageType::Entity,
-        "Classical computing uses binary bits.",
-    ))
-    .await
-    .unwrap();
-
-    db.index_page(&sample_page(
-        "wiki/ai",
-        "Artificial Intelligence",
-        PageType::Concept,
-        "AI involves machine learning and neural networks.",
-    ))
-    .await
-    .unwrap();
-
-    let hits = db.search_keyword("quantum", 10, None).await.unwrap();
-    assert!(!hits.is_empty(), "should find quantum page");
-    assert!(hits.iter().any(|h| h.slug == "wiki/quantum"));
-
-    let hits = db.search_keyword("computing", 10, None).await.unwrap();
-    assert!(hits.len() >= 2, "should find both computing pages");
-
-    let hits = db
-        .search_keyword("computing", 10, Some("entity"))
+async fn test_index() -> IndexEngine {
+    IndexEngine::new("sqlite::memory:")
         .await
-        .unwrap();
-    assert!(!hits.is_empty());
+        .expect("in-memory index")
+}
 
-    let hits = db.search_keyword("zzzznonexistent", 10, None).await.unwrap();
-    assert!(hits.is_empty());
+async fn test_registry(fns_url: &str) -> OperationRegistry {
+    let fns = Arc::new(FnsClient::new(
+        fns_url.to_string(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let index = Arc::new(test_index().await);
+    let config = test_config(fns_url);
+    OperationRegistry::new(fns, index, config)
+}
+
+fn sample_markdown(title: &str, body: &str) -> String {
+    format!(
+        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\n{}\n",
+        title, body
+    )
+}
+
+fn sample_markdown_with_link(target: &str) -> String {
+    sample_markdown(
+        "Link Page",
+        &format!("This references [[{}]].", target),
+    )
+}
+
+fn fns_string_response(data: &str) -> serde_json::Value {
+    json!({"code": 1, "status": true, "message": "Success", "data": {"content": data, "path": "", "fileLinks": {}, "version": 1}})
+}
+
+fn fns_array_response(data: Vec<&str>) -> serde_json::Value {
+    json!({"code": 1, "status": true, "message": "Success", "data": data})
+}
+
+fn fns_success_response() -> serde_json::Value {
+    json!({"code": 1, "status": true, "message": "Success", "data": null})
+}
+
+async fn setup_note_get_mock(server: &MockServer, slug: &str, content: &str) {
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("vault", "test-vault"))
+        .and(query_param("path", slug))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_string_response(content)),
+        )
+        .mount(server)
+        .await;
+}
+
+async fn setup_note_put_mock(server: &MockServer, slug: &str) {
+    Mock::given(method("POST"))
+        .and(path("/api/note"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_success_response()),
+        )
+        .mount(server)
+        .await;
+}
+
+async fn setup_note_delete_mock(server: &MockServer, slug: &str) {
+    Mock::given(method("DELETE"))
+        .and(path("/api/note"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_success_response()),
+        )
+        .mount(server)
+        .await;
+}
+
+async fn setup_list_mock(server: &MockServer, files: &[&str]) {
+    let list_items: Vec<serde_json::Value> = files
+        .iter()
+        .map(|f| json!({"path": f}))
+        .collect();
+    let total = files.len();
+    let response_data = json!({
+        "list": list_items,
+        "pager": { "totalRows": total }
+    });
+    Mock::given(method("GET"))
+        .and(path("/api/folder/notes"))
+        .and(query_param("vault", "test-vault"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": response_data})),
+        )
+        .mount(server)
+        .await;
+}
+
+async fn setup_folders_mock(server: &MockServer, folders: &[&str]) {
+    let folder_items: Vec<serde_json::Value> = folders
+        .iter()
+        .map(|f| json!({"path": f}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/api/folders"))
+        .and(query_param("vault", "test-vault"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": folder_items})),
+        )
+        .mount(server)
+        .await;
 }
 
 #[tokio::test]
-async fn test_brain_search_respects_limit() {
-    let db = in_memory_db().await;
+async fn test_tools_list_returns_all_operations() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
 
-    for i in 0..10 {
-        db.index_page(&sample_page(
-            &format!("wiki/page{}", i),
-            &format!("Search Result {}", i),
-            PageType::Entity,
-            "Common searchable content for limit test.",
-        ))
-        .await
-        .unwrap();
+    let ops = reg.list_operations();
+    assert_eq!(ops.len(), 12);
+
+    let names: Vec<&str> = ops.iter().map(|o| o.name.as_str()).collect();
+    assert!(names.contains(&"page.get"));
+    assert!(names.contains(&"page.put"));
+    assert!(names.contains(&"page.delete"));
+    assert!(names.contains(&"page.list"));
+    assert!(names.contains(&"page.append"));
+    assert!(names.contains(&"search"));
+    assert!(names.contains(&"graph.query"));
+    assert!(names.contains(&"graph.backlinks"));
+    assert!(names.contains(&"sync"));
+    assert!(names.contains(&"maintain"));
+    assert!(names.contains(&"stats"));
+    assert!(names.contains(&"reindex"));
+
+    for op in &ops {
+        assert!(!op.name.is_empty());
+        assert!(!op.description.is_empty());
+        assert!(op.input_schema.is_object());
     }
-
-    let hits = db.search_keyword("searchable", 3, None).await.unwrap();
-    assert!(hits.len() <= 3, "should respect limit");
 }
 
 #[tokio::test]
-async fn test_brain_stats_empty_database() {
-    let server = test_mcp_server().await;
+async fn test_page_put_then_get_roundtrip() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
 
-    let req = make_request(
-        "tools/call",
-        Some(json!(10)),
-        Some(json!({
-            "name": "brain_stats",
-            "arguments": {}
-        })),
-    );
+    let content = sample_markdown("Test Page", "Compiled truth content.");
 
-    let resp = server.handle(req).await.unwrap();
-    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+    setup_note_put_mock(&server, "test-page").await;
+    setup_note_get_mock(&server, "test-page", &content).await;
 
-    let result = resp.result.unwrap();
-    let content = result["content"].as_array().unwrap();
-    assert_eq!(content[0]["type"], "text");
+    let put_result = reg
+        .execute(Operation::PagePut {
+            slug: "test-page".into(),
+            content: content.clone(),
+            etag: None,
+        })
+        .await
+        .expect("put should succeed");
+    assert_eq!(put_result["slug"], "test-page");
+    assert_eq!(put_result["indexed"], true);
 
-    let text: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(text["total_pages"], 0);
-    assert_eq!(text["total_links"], 0);
-    assert_eq!(text["orphan_pages"], 0);
-    assert!(text["db_size_mb"].is_number());
+    let get_result = reg
+        .execute(Operation::PageGet {
+            slug: "test-page".into(),
+        })
+        .await
+        .expect("get should succeed");
+    assert_eq!(get_result["slug"], "test-page");
+    assert_eq!(get_result["content"].as_str().unwrap(), content);
+    assert!(get_result["frontmatter"].is_object());
+    assert!(get_result["metadata"].is_object());
 }
 
 #[tokio::test]
-async fn test_brain_stats_with_data() {
-    let db = in_memory_db().await;
+async fn test_page_put_auto_indexes() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
 
-    db.index_page(&sample_page(
-        "wiki/e1",
-        "Entity 1",
-        PageType::Entity,
-        "Content one",
-    ))
+    let content = sample_markdown("Indexed Page", "Searchable content about rust.");
+
+    setup_note_put_mock(&server, "indexed-page").await;
+
+    reg.execute(Operation::PagePut {
+        slug: "indexed-page".into(),
+        content,
+        etag: None,
+    })
     .await
-    .unwrap();
+    .expect("put should succeed");
 
-    db.index_page(&sample_page(
-        "wiki/e2",
-        "Entity 2",
-        PageType::Entity,
-        "Content two",
-    ))
-    .await
-    .unwrap();
-
-    db.index_page(&sample_page(
-        "wiki/c1",
-        "Concept 1",
-        PageType::Concept,
-        "Concept content",
-    ))
-    .await
-    .unwrap();
-
-    db.update_links(
-        "wiki/e1",
-        &[Link {
-            source_slug: "wiki/e1".to_string(),
-            target_slug: "wiki/c1".to_string(),
-            link_type: "link".to_string(),
-            context_snippet: None,
-        }],
-    )
-    .await
-    .unwrap();
-
-    let stats = db.get_stats().await.unwrap();
-
-    assert_eq!(stats.total_pages, 3);
-    assert_eq!(stats.total_links, 1);
-    assert!(stats.last_sync.is_some());
-    assert_eq!(stats.by_type.get("entity"), Some(&2));
-    assert_eq!(stats.by_type.get("concept"), Some(&1));
+    let search_result = reg
+        .execute(Operation::Search {
+            query: "rust".into(),
+            limit: Some(10),
+            type_filter: None,
+        })
+        .await
+        .expect("search should succeed");
+    assert!(search_result["total"].as_u64().unwrap() >= 1);
+    let results = search_result["results"].as_array().unwrap();
+    assert!(results.iter().any(|r| r["slug"] == "indexed-page"));
 }
 
 #[tokio::test]
-async fn test_brain_maintain_full_scope() {
-    let db = in_memory_db().await;
+async fn test_page_put_extracts_wikilinks() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
 
-    db.index_page(&sample_page(
-        "wiki/good.md",
-        "Good Page",
-        PageType::Entity,
-        "Well-formed page.",
-    ))
+    let content = sample_markdown_with_link("target-page");
+
+    setup_note_put_mock(&server, "source-page").await;
+
+    let put_result = reg
+        .execute(Operation::PagePut {
+            slug: "source-page".into(),
+            content,
+            etag: None,
+        })
+        .await
+        .expect("put should succeed");
+    assert!(put_result["links_count"].as_u64().unwrap() >= 1);
+
+    let backlinks = reg
+        .execute(Operation::GraphBacklinks {
+            slug: "target-page".into(),
+        })
+        .await
+        .expect("backlinks should succeed");
+    assert!(backlinks["count"].as_u64().unwrap() >= 1);
+    let sources: Vec<&str> = backlinks["backlinks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["source_slug"].as_str().unwrap())
+        .collect();
+    assert!(sources.contains(&"source-page"));
+}
+
+#[tokio::test]
+async fn test_page_delete_removes_from_index() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    let content = sample_markdown("Delete Me", "Temporary content.");
+
+    setup_note_put_mock(&server, "delete-me").await;
+    setup_note_delete_mock(&server, "delete-me").await;
+
+    reg.execute(Operation::PagePut {
+        slug: "delete-me".into(),
+        content,
+        etag: None,
+    })
     .await
-    .unwrap();
+    .expect("put should succeed");
 
-    db.index_page(&sample_page(
-        "wiki/BadName.md",
-        "Bad Name",
-        PageType::Entity,
-        "Has uppercase in slug.",
-    ))
-    .await
-    .unwrap();
+    let stats_before = reg.execute(Operation::Stats).await.unwrap();
+    assert!(stats_before["total_pages"].as_i64().unwrap() >= 1);
 
-    db.update_links(
-        "wiki/good.md",
-        &[Link {
-            source_slug: "wiki/good.md".to_string(),
-            target_slug: "wiki/missing.md".to_string(),
-            link_type: "link".to_string(),
-            context_snippet: None,
-        }],
-    )
-    .await
-    .unwrap();
+    let del_result = reg
+        .execute(Operation::PageDelete {
+            slug: "delete-me".into(),
+        })
+        .await
+        .expect("delete should succeed");
+    assert_eq!(del_result["deleted"], true);
 
-    let tool_registry = ToolRegistry::new(Arc::new(db));
+    let stats_after = reg.execute(Operation::Stats).await.unwrap();
+    assert_eq!(stats_after["total_pages"].as_i64().unwrap(), 0);
+}
 
-    let result = tool_registry
-        .call("brain_maintain", json!({ "scope": "full" }))
+#[tokio::test]
+async fn test_page_list_returns_files() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_list_mock(&server, &["alpha.md", "beta.md", "gamma.md"]).await;
+
+    let result = reg
+        .execute(Operation::PageList { dir: None })
+        .await
+        .expect("list should succeed");
+
+    let files = result["files"].as_array().unwrap();
+    assert_eq!(files.len(), 3);
+    assert_eq!(result["count"], 3);
+}
+
+#[tokio::test]
+async fn test_search_finds_indexed_page() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_a = sample_markdown("Quantum Physics", "Quantum mechanics is fascinating.");
+    let page_a = stele::parser::page::parse_page(&md_a, "quantum").unwrap();
+    index.index_page(&page_a).await.unwrap();
+
+    let md_b = sample_markdown("Classical Physics", "Newtonian mechanics.");
+    let page_b = stele::parser::page::parse_page(&md_b, "classical").unwrap();
+    index.index_page(&page_b).await.unwrap();
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg
+        .execute(Operation::Search {
+            query: "quantum".into(),
+            limit: Some(10),
+            type_filter: None,
+        })
+        .await
+        .expect("search should succeed");
+
+    assert_eq!(result["query"], "quantum");
+    assert!(result["total"].as_u64().unwrap() >= 1);
+    let results = result["results"].as_array().unwrap();
+    assert!(results.iter().any(|r| r["slug"] == "quantum"));
+}
+
+#[tokio::test]
+async fn test_search_type_filter() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_entity = "---\ntitle: Rust Language\npage_type: Entity\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nRust is a systems language.\n";
+    let page_e = stele::parser::page::parse_page(md_entity, "rust-lang").unwrap();
+    index.index_page(&page_e).await.unwrap();
+
+    let md_concept = "---\ntitle: Ownership Concept\npage_type: Concept\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nOwnership is a Rust concept.\n";
+    let page_c = stele::parser::page::parse_page(md_concept, "ownership").unwrap();
+    index.index_page(&page_c).await.unwrap();
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg
+        .execute(Operation::Search {
+            query: "rust".into(),
+            limit: Some(10),
+            type_filter: Some("Entity".into()),
+        })
+        .await
+        .expect("search should succeed");
+
+    let results = result["results"].as_array().unwrap();
+    assert!(results.iter().any(|r| r["slug"] == "rust-lang"));
+    assert!(!results.iter().any(|r| r["slug"] == "ownership"));
+}
+
+#[tokio::test]
+async fn test_graph_query_returns_outlinks() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_a = sample_markdown_with_link("page-b");
+    let page_a = stele::parser::page::parse_page(&md_a, "page-a").unwrap();
+    index.index_page(&page_a).await.unwrap();
+
+    let md_b = sample_markdown("Page B", "B content.");
+    let page_b = stele::parser::page::parse_page(&md_b, "page-b").unwrap();
+    index.index_page(&page_b).await.unwrap();
+
+    let links = stele::parser::wikilink::extract_links_for_page(&page_a.compiled_truth, "page-a");
+    index.update_links("page-a", &links).await.unwrap();
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg
+        .execute(Operation::GraphQuery {
+            slug: "page-a".into(),
+            depth: Some(1),
+        })
+        .await
+        .expect("graph query should succeed");
+
+    assert_eq!(result["slug"], "page-a");
+    let outlinks = result["outlinks"].as_array().unwrap();
+    assert!(!outlinks.is_empty());
+    let targets: Vec<&str> = outlinks
+        .iter()
+        .map(|l| l["target_slug"].as_str().unwrap())
+        .collect();
+    assert!(targets.contains(&"page-b"));
+}
+
+#[tokio::test]
+async fn test_graph_backlinks() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_a = sample_markdown_with_link("target");
+    let page_a = stele::parser::page::parse_page(&md_a, "page-a").unwrap();
+    index.index_page(&page_a).await.unwrap();
+
+    let md_b = "---\ntitle: Page B\npage_type: Entity\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nAlso links to [[target]].\n";
+    let page_b = stele::parser::page::parse_page(md_b, "page-b").unwrap();
+    index.index_page(&page_b).await.unwrap();
+
+    let md_target = sample_markdown("Target", "Target content.");
+    let page_target = stele::parser::page::parse_page(&md_target, "target").unwrap();
+    index.index_page(&page_target).await.unwrap();
+
+    let links_a = stele::parser::wikilink::extract_links_for_page(&page_a.compiled_truth, "page-a");
+    index.update_links("page-a", &links_a).await.unwrap();
+    let links_b = stele::parser::wikilink::extract_links_for_page(&page_b.compiled_truth, "page-b");
+    index.update_links("page-b", &links_b).await.unwrap();
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg
+        .execute(Operation::GraphBacklinks {
+            slug: "target".into(),
+        })
+        .await
+        .expect("backlinks should succeed");
+
+    assert_eq!(result["count"], 2);
+    let sources: Vec<&str> = result["backlinks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["source_slug"].as_str().unwrap())
+        .collect();
+    assert!(sources.contains(&"page-a"));
+    assert!(sources.contains(&"page-b"));
+}
+
+#[tokio::test]
+async fn test_sync_indexes_from_fns() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_list_mock(&server, &["alpha.md", "beta.md"]).await;
+    setup_folders_mock(&server, &[]).await;
+
+    let md_alpha = sample_markdown("Alpha", "Alpha content.");
+    setup_note_get_mock(&server, "alpha.md", &md_alpha).await;
+
+    let md_beta = sample_markdown("Beta", "Beta content.");
+    setup_note_get_mock(&server, "beta.md", &md_beta).await;
+
+    let result = reg
+        .execute(Operation::Sync { dir: None })
+        .await
+        .expect("sync should succeed");
+
+    assert_eq!(result["pages_indexed"], 2);
+    assert_eq!(result["pages_removed"], 0);
+    assert!(result["errors"].as_array().unwrap().is_empty());
+
+    let stats = reg.execute(Operation::Stats).await.unwrap();
+    assert_eq!(stats["total_pages"], 2);
+}
+
+#[tokio::test]
+async fn test_sync_removes_deleted_pages() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    let md_keep = sample_markdown("Keep", "Keep content.");
+    let md_remove = sample_markdown("Remove", "Remove content.");
+
+    Mock::given(method("GET"))
+        .and(path("/api/folder/notes"))
+        .and(query_param("vault", "test-vault"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": {"list": [{"path": "keep.md"}, {"path": "remove.md"}], "pager": {"totalRows": 2}}})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
         .await;
 
+    setup_folders_mock(&server, &[]).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("path", "keep.md"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("path", "remove.md"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_remove)),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    reg.execute(Operation::Sync { dir: None })
+        .await
+        .expect("first sync should succeed");
+
+    Mock::given(method("GET"))
+        .and(path("/api/folder/notes"))
+        .and(query_param("vault", "test-vault"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": {"list": [{"path": "keep.md"}], "pager": {"totalRows": 1}}})),
+        )
+        .mount(&server)
+        .await;
+
+    setup_folders_mock(&server, &[]).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("path", "keep.md"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)),
+        )
+        .mount(&server)
+        .await;
+
+    let result = reg
+        .execute(Operation::Sync { dir: None })
+        .await
+        .expect("second sync should succeed");
+
+    assert_eq!(result["pages_removed"], 1);
+
+    let stats = reg.execute(Operation::Stats).await.unwrap();
+    assert_eq!(stats["total_pages"], 1);
+}
+
+#[tokio::test]
+async fn test_maintain_detects_orphans() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_a = sample_markdown("Page A", "Content A.");
+    let page_a = stele::parser::page::parse_page(&md_a, "page-a").unwrap();
+    index.index_page(&page_a).await.unwrap();
+
+    let md_b = sample_markdown("Page B", "Content B.");
+    let page_b = stele::parser::page::parse_page(&md_b, "page-b").unwrap();
+    index.index_page(&page_b).await.unwrap();
+
+    let links = stele::parser::wikilink::extract_links_for_page(&page_a.compiled_truth, "page-a");
+    if !links.is_empty() {
+        index.update_links("page-a", &links).await.unwrap();
+    }
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg
+        .execute(Operation::Maintain {
+            scope: Some("orphans".into()),
+        })
+        .await
+        .expect("maintain should succeed");
+
+    assert_eq!(result["scope"], "orphans");
+    let issues = result["issues"].as_array().unwrap();
+    assert!(!issues.is_empty());
+
+    let orphan_msgs: Vec<&str> = issues
+        .iter()
+        .map(|i| i["message"].as_str().unwrap())
+        .collect();
+    assert!(orphan_msgs.iter().any(|m| m.contains("page-a")));
+}
+
+#[tokio::test]
+async fn test_stats_returns_counts() {
+    let server = MockServer::start().await;
+    let index = test_index().await;
+
+    let md_1 = sample_markdown("Page 1", "Content 1.");
+    let page_1 = stele::parser::page::parse_page(&md_1, "page-1").unwrap();
+    index.index_page(&page_1).await.unwrap();
+
+    let md_2 = sample_markdown("Page 2", "Content 2.");
+    let page_2 = stele::parser::page::parse_page(&md_2, "page-2").unwrap();
+    index.index_page(&page_2).await.unwrap();
+
+    let md_3 = sample_markdown_with_link("page-2");
+    let page_3 = stele::parser::page::parse_page(&md_3, "page-3").unwrap();
+    index.index_page(&page_3).await.unwrap();
+
+    let links = stele::parser::wikilink::extract_links_for_page(&page_3.compiled_truth, "page-3");
+    index.update_links("page-3", &links).await.unwrap();
+
+    let fns = Arc::new(FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let config = test_config(&server.uri());
+    let reg = OperationRegistry::new(fns, Arc::new(index), config);
+
+    let result = reg.execute(Operation::Stats).await.expect("stats should succeed");
+
+    assert_eq!(result["total_pages"], 3);
+    assert!(result["total_links"].as_i64().unwrap() >= 1);
+    assert!(result["pages_by_type"].is_object());
+    assert_eq!(result["pages_by_type"]["Entity"].as_i64().unwrap(), 3);
+}
+
+#[tokio::test]
+async fn test_reindex_rebuilds_index() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    let md = sample_markdown("Pre-existing", "Old content.");
+
+    setup_list_mock(&server, &["pre-existing.md"]).await;
+    setup_note_get_mock(&server, "pre-existing.md", &md).await;
+
+    reg.execute(Operation::Sync { dir: None })
+        .await
+        .expect("initial sync should succeed");
+
+    let stats_before = reg.execute(Operation::Stats).await.unwrap();
+    assert_eq!(stats_before["total_pages"], 1);
+
+    let result = reg
+        .execute(Operation::Reindex)
+        .await
+        .expect("reindex should succeed");
+
+    assert_eq!(result["reindexed"], true);
+
+    let stats_after = reg.execute(Operation::Stats).await.unwrap();
+    assert_eq!(stats_after["total_pages"], 1);
+}
+
+#[tokio::test]
+async fn test_page_etag_conflict() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    let content = sample_markdown("Etag Page", "Content.");
+
+    setup_note_put_mock(&server, "etag-page").await;
+
+    reg.execute(Operation::PagePut {
+        slug: "etag-page".into(),
+        content: content.clone(),
+        etag: None,
+    })
+    .await
+    .expect("first put should succeed");
+
+    let result = reg
+        .execute(Operation::PagePut {
+            slug: "etag-page".into(),
+            content,
+            etag: Some("wrong-etag-hash".into()),
+        })
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
     assert!(
-        result.is_ok(),
-        "brain_maintain should succeed: {:?}",
-        result.err()
+        err_str.contains("conflict") || err_str.contains("etag"),
+        "expected conflict error, got: {}",
+        err_str
     );
-
-    let value = result.unwrap();
-    let text = value.to_string();
-    assert!(text.contains("issues_found") || text.contains("scope"));
 }
 
 #[tokio::test]
-async fn test_brain_maintain_orphans_scope() {
-    let db = in_memory_db().await;
+async fn test_fns_error_propagates() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
 
-    db.index_page(&sample_page(
-        "wiki/exists.md",
-        "Exists",
-        PageType::Entity,
-        "Content.",
-    ))
-    .await
-    .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
+        .mount(&server)
+        .await;
 
-    db.update_links(
-        "wiki/exists.md",
-        &[Link {
-            source_slug: "wiki/exists.md".to_string(),
-            target_slug: "wiki/ghost.md".to_string(),
-            link_type: "link".to_string(),
-            context_snippet: None,
-        }],
-    )
-    .await
-    .unwrap();
+    let result = reg
+        .execute(Operation::PageGet {
+            slug: "nonexistent".into(),
+        })
+        .await;
 
-    let tool_registry = ToolRegistry::new(Arc::new(db));
-
-    let result = tool_registry
-        .call("brain_maintain", json!({ "scope": "orphans" }))
-        .await
-        .unwrap();
-
-    let text = result.to_string();
-    assert!(text.contains("orphan") || text.contains("issues_found"));
-}
-
-#[tokio::test]
-async fn test_mcp_notification_returns_none() {
-    let server = test_mcp_server().await;
-
-    let req = make_request("notifications/initialized", None, None);
-    let resp = server.handle(req).await;
-    assert!(resp.is_none(), "notifications must not produce a response");
-}
-
-#[tokio::test]
-async fn test_mcp_unknown_method_returns_error() {
-    let server = test_mcp_server().await;
-
-    let req = make_request("nonexistent/method", Some(json!(99)), None);
-    let resp = server.handle(req).await.unwrap();
-
-    assert!(resp.result.is_none());
-    let err = resp.error.unwrap();
-    assert_eq!(err.code, JsonRpcError::METHOD_NOT_FOUND);
-}
-
-#[tokio::test]
-async fn test_mcp_tools_call_missing_name_returns_error() {
-    let server = test_mcp_server().await;
-
-    let req = make_request("tools/call", Some(json!(10)), Some(json!({})));
-    let resp = server.handle(req).await.unwrap();
-
-    let err = resp.error.unwrap();
-    assert_eq!(err.code, JsonRpcError::INVALID_PARAMS);
-}
-
-#[tokio::test]
-async fn test_mcp_ping_returns_empty_object() {
-    let server = test_mcp_server().await;
-
-    let req = make_request("ping", Some(json!(5)), None);
-    let resp = server.handle(req).await.unwrap();
-
-    assert_eq!(resp.result, Some(json!({})));
-    assert!(resp.error.is_none());
-}
-
-#[tokio::test]
-async fn test_link_graph_roundtrip() {
-    let db = in_memory_db().await;
-
-    db.index_page(&sample_page("wiki/a", "Page A", PageType::Entity, "A"))
-        .await
-        .unwrap();
-    db.index_page(&sample_page("wiki/b", "Page B", PageType::Entity, "B"))
-        .await
-        .unwrap();
-    db.index_page(&sample_page("wiki/c", "Page C", PageType::Entity, "C"))
-        .await
-        .unwrap();
-
-    db.update_links(
-        "wiki/a",
-        &[
-            Link {
-                source_slug: "wiki/a".to_string(),
-                target_slug: "wiki/b".to_string(),
-                link_type: "link".to_string(),
-                context_snippet: Some("see B".to_string()),
-            },
-            Link {
-                source_slug: "wiki/a".to_string(),
-                target_slug: "wiki/c".to_string(),
-                link_type: "works_at".to_string(),
-                context_snippet: None,
-            },
-        ],
-    )
-    .await
-    .unwrap();
-
-    let bl_b = db.get_backlinks("wiki/b").await.unwrap();
-    assert_eq!(bl_b.len(), 1);
-    assert_eq!(bl_b[0].source_slug, "wiki/a");
-
-    let bl_c = db.get_backlinks("wiki/c").await.unwrap();
-    assert_eq!(bl_c.len(), 1);
-    assert_eq!(bl_c[0].link_type, "works_at");
-
-    let outgoing = db.get_outgoing_link_targets("wiki/a").await.unwrap();
-    assert_eq!(outgoing.len(), 2);
-    assert!(outgoing.contains(&"wiki/b".to_string()));
-    assert!(outgoing.contains(&"wiki/c".to_string()));
-
-    assert!(db.has_direct_link("wiki/a", "wiki/b").await.unwrap());
-    assert!(!db.has_direct_link("wiki/b", "wiki/a").await.unwrap());
-
-    db.update_links(
-        "wiki/a",
-        &[Link {
-            source_slug: "wiki/a".to_string(),
-            target_slug: "wiki/b".to_string(),
-            link_type: "link".to_string(),
-            context_snippet: None,
-        }],
-    )
-    .await
-    .unwrap();
-
-    let bl_c = db.get_backlinks("wiki/c").await.unwrap();
+    assert!(result.is_err());
+    let err_str = result.unwrap_err().to_string();
     assert!(
-        bl_c.is_empty(),
-        "C should have no backlinks after replacement"
+        err_str.contains("fns") || err_str.contains("server error"),
+        "expected FNS error, got: {}",
+        err_str
     );
-}
-
-#[tokio::test]
-async fn test_page_upsert_updates_existing() {
-    let db = in_memory_db().await;
-
-    let mut page = sample_page("wiki/upsert", "Original", PageType::Entity, "Original content");
-    db.index_page(&page).await.unwrap();
-
-    page.frontmatter.title = "Updated Title".to_string();
-    page.content_hash = "new-hash".to_string();
-    page.compiled_truth = "Updated content.".to_string();
-    db.index_page(&page).await.unwrap();
-
-    let row = db.get_page("wiki/upsert").await.unwrap().unwrap();
-    assert_eq!(row.title, "Updated Title");
-    assert_eq!(row.content_hash, "new-hash");
-    assert_eq!(row.compiled_truth.as_deref(), Some("Updated content."));
-}
-
-#[tokio::test]
-async fn test_page_remove_cleans_links() {
-    let db = in_memory_db().await;
-
-    db.index_page(&sample_page("wiki/src", "Source", PageType::Entity, "S"))
-        .await
-        .unwrap();
-    db.index_page(&sample_page("wiki/tgt", "Target", PageType::Entity, "T"))
-        .await
-        .unwrap();
-
-    db.update_links(
-        "wiki/src",
-        &[Link {
-            source_slug: "wiki/src".to_string(),
-            target_slug: "wiki/tgt".to_string(),
-            link_type: "link".to_string(),
-            context_snippet: None,
-        }],
-    )
-    .await
-    .unwrap();
-
-    let removed = db.remove_page("wiki/src").await.unwrap();
-    assert!(removed);
-
-    assert!(db.get_page("wiki/src").await.unwrap().is_none());
-
-    let backlinks = db.get_backlinks("wiki/tgt").await.unwrap();
-    assert!(backlinks.is_empty());
-}
-
-#[tokio::test]
-async fn test_brain_search_via_mcp_tools_call() {
-    let db = Arc::new(in_memory_db().await);
-
-    db.index_page(&sample_page(
-        "wiki/rust-lang",
-        "Rust Language",
-        PageType::Entity,
-        "Rust is a modern systems programming language.",
-    ))
-    .await
-    .unwrap();
-
-    let tool_registry = Arc::new(ToolRegistry::new(db));
-    let file_backend = Arc::new(NoopBackend);
-    let resource_registry = Arc::new(ResourceRegistry::new(file_backend.clone()));
-    let server = McpServer::new(tool_registry, resource_registry, file_backend);
-
-    let req = make_request(
-        "tools/call",
-        Some(json!(20)),
-        Some(json!({
-            "name": "brain_search",
-            "arguments": {
-                "query": "rust",
-                "limit": 10
-            }
-        })),
-    );
-
-    let resp = server.handle(req).await.unwrap();
-    assert!(
-        resp.error.is_none(),
-        "brain_search should succeed: {:?}",
-        resp.error
-    );
-
-    let result = resp.result.unwrap();
-    let content = result["content"].as_array().unwrap();
-    let text: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-
-    assert_eq!(text["query"], "rust");
-    assert!(text["total"].as_u64().unwrap() >= 1);
-
-    let results = text["results"].as_array().unwrap();
-    assert!(results.iter().any(|r| r["slug"] == "wiki/rust-lang"));
 }

@@ -1,3 +1,3 @@
-pub mod hybrid;
+/// Keyword full-text search over the SQLite FTS5 index.
 pub mod keyword;
-pub mod vector;
+pub use keyword::{keyword_search, SearchHit};
