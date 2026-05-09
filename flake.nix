@@ -95,10 +95,7 @@
           muslOpenssl = muslPkgs.openssl;
         in pkgs.mkShell {
           nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [
-            muslToolchain
-            pkgs.musl.dev
-          ];
+          buildInputs = [ muslToolchain ];
 
           # muslOpenssl is NOT in buildInputs — referencing it only via env
           # vars prevents the pkgsStatic overlay from replacing the host cc
