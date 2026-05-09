@@ -92,21 +92,24 @@
           };
           muslPkgs = pkgs.pkgsStatic;
           muslGcc = "${pkgs.musl.dev}/bin/musl-gcc";
+          muslOpenssl = muslPkgs.openssl;
         in pkgs.mkShell {
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             muslToolchain
             pkgs.musl.dev
-            muslPkgs.openssl
           ];
 
+          # muslOpenssl is NOT in buildInputs — referencing it only via env
+          # vars prevents the pkgsStatic overlay from replacing the host cc
+          # with the musl cross-compiler, which broke host build scripts.
           "CC_x86_64_unknown_linux_musl" = muslGcc;
           "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" = muslGcc;
           "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS" = "-C relocation-model=static";
           OPENSSL_STATIC = "1";
-          OPENSSL_DIR = "${muslPkgs.openssl.dev}";
-          OPENSSL_LIB_DIR = "${muslPkgs.openssl.out}/lib";
-          OPENSSL_INCLUDE_DIR = "${muslPkgs.openssl.dev}/include";
+          OPENSSL_DIR = "${muslOpenssl.dev}";
+          OPENSSL_LIB_DIR = "${muslOpenssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${muslOpenssl.dev}/include";
         };
 
       }
