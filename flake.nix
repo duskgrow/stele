@@ -86,6 +86,24 @@
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         };
 
+        devShells.ci = let
+          muslToolchain = pkgs.rust-bin.stable.latest.default.override {
+            targets = [ "x86_64-unknown-linux-musl" ];
+          };
+          muslPkgs = pkgs.pkgsCross.musl64;
+        in pkgs.mkShell {
+          nativeBuildInputs = [ pkgs.pkg-config muslPkgs.zlib ];
+          buildInputs = [
+            muslToolchain
+            muslPkgs.openssl
+          ];
+
+          OPENSSL_STATIC = "1";
+          OPENSSL_DIR = "${muslPkgs.openssl.dev}";
+          OPENSSL_LIB_DIR = "${muslPkgs.openssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${muslPkgs.openssl.dev}/include";
+        };
+
       }
     );
 }
