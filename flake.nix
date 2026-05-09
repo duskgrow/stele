@@ -86,25 +86,6 @@
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         };
 
-        devShells.cross = let
-          crossToolchain = pkgs.rust-bin.stable.latest.default.override {
-            targets = [ "aarch64-unknown-linux-gnu" ];
-          };
-          crossPkgs = pkgs.pkgsCross.aarch64-multiplatform;
-          cc = crossPkgs.stdenv.cc;
-        in pkgs.mkShell {
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [
-            crossToolchain
-            cc
-            crossPkgs.openssl
-          ];
-
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${cc}/bin/cc";
-          OPENSSL_DIR = "${crossPkgs.openssl.dev}";
-          OPENSSL_LIB_DIR = "${crossPkgs.openssl.out}/lib";
-          OPENSSL_INCLUDE_DIR = "${crossPkgs.openssl.dev}/include";
-        };
       }
     );
 }
