@@ -90,14 +90,19 @@
           muslToolchain = pkgs.rust-bin.stable.latest.default.override {
             targets = [ "x86_64-unknown-linux-musl" ];
           };
-          muslPkgs = pkgs.pkgsCross.musl64;
+          muslPkgs = pkgs.pkgsStatic;
+          muslGcc = "${pkgs.musl.dev}/bin/musl-gcc";
         in pkgs.mkShell {
-          nativeBuildInputs = [ pkgs.pkg-config muslPkgs.zlib ];
+          nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             muslToolchain
+            pkgs.musl.dev
             muslPkgs.openssl
           ];
 
+          "CC_x86_64_unknown_linux_musl" = muslGcc;
+          "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" = muslGcc;
+          "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS" = "-C relocation-model=static";
           OPENSSL_STATIC = "1";
           OPENSSL_DIR = "${muslPkgs.openssl.dev}";
           OPENSSL_LIB_DIR = "${muslPkgs.openssl.out}/lib";
