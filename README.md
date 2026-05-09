@@ -141,3 +141,10 @@ cargo doc --no-deps
 # Run with logging
 RUST_LOG=info cargo run -- serve
 ```
+
+## References
+
+- [karpathy/min](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+- [garrytan/gbrain](https://github.com/garrytan/gbrain)
+
+Thanks to their work for the inspiration.
