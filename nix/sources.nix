@@ -2,6 +2,6 @@
 {
   version = "0.2.1";
   hashes = {
-    x86_64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    x86_64-linux = "sha256-dfBvQO4D0yAufRoJk/fXiW7ehv0P+0EQjqNxEbtamcQ=";
   };
 }
