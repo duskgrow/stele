@@ -90,15 +90,18 @@
           crossToolchain = pkgs.rust-bin.stable.latest.default.override {
             targets = [ "aarch64-unknown-linux-gnu" ];
           };
-          inherit (pkgs.pkgsCross.aarch64-multiplatform) stdenv openssl;
+          crossPkgs = pkgs.pkgsCross.aarch64-multiplatform;
         in pkgs.mkShell {
+          nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             crossToolchain
-            pkgs.pkg-config
-            openssl
+            crossPkgs.openssl
           ];
 
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${stdenv.cc}/bin/cc";
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${crossPkgs.stdenv.cc}/bin/cc";
+          OPENSSL_DIR = "${crossPkgs.openssl.dev}";
+          OPENSSL_LIB_DIR = "${crossPkgs.openssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${crossPkgs.openssl.dev}/include";
         };
       }
     );
