@@ -32,8 +32,12 @@ jobs:
 
       - name: Build
         run: |
-          DEV_SHELL="${{ matrix.system == 'aarch64-linux' && '.#cross' || '' }}"
-          nix develop $DEV_SHELL --command cargo build --release --target ${{ matrix.target }}
+          if [ "${{ matrix.system }}" = "aarch64-linux" ]; then
+            nix build .#devShells.cross --no-link
+            nix develop .#cross --command cargo build --release --target ${{ matrix.target }}
+          else
+            nix develop --command cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

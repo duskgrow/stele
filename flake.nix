@@ -91,15 +91,16 @@
             targets = [ "aarch64-unknown-linux-gnu" ];
           };
           crossPkgs = pkgs.pkgsCross.aarch64-multiplatform;
+          cc = crossPkgs.stdenv.cc;
         in pkgs.mkShell {
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             crossToolchain
-            crossPkgs.stdenv.cc
+            cc
             crossPkgs.openssl
           ];
 
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${crossPkgs.stdenv.cc}/bin/cc";
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${cc}/bin/cc";
           OPENSSL_DIR = "${crossPkgs.openssl.dev}";
           OPENSSL_LIB_DIR = "${crossPkgs.openssl.out}/lib";
           OPENSSL_INCLUDE_DIR = "${crossPkgs.openssl.dev}/include";
