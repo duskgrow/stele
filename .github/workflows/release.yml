@@ -24,8 +24,8 @@ jobs:
           path: |
             target/
             ~/.cargo/registry/
-          key: cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-
+          key: cargo-musl-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-musl-
 
       - name: Build
         run: nix develop .#ci --command cargo build --release --target x86_64-unknown-linux-musl
