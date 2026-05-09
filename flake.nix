@@ -95,6 +95,7 @@
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [
             crossToolchain
+            crossPkgs.stdenv.cc
             crossPkgs.openssl
           ];
 
