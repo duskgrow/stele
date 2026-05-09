@@ -15,12 +15,43 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" ];
         };
-        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-      in {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "stele";
-          version = cargoToml.package.version;
+        release = import ./nix/sources.nix;
+        src = pkgs.lib.cleanSourceWith {
           src = ./.;
+          filter = path: type:
+            let baseName = builtins.baseNameOf path;
+            in !(builtins.elem baseName [".git" "target" "result"]);
+        };
+      in {
+        packages.default = pkgs.stdenv.mkDerivation {
+          pname = "stele";
+          version = release.version;
+
+          src = pkgs.fetchurl {
+            url = "https://github.com/duskgrow/stele/releases/download/v${release.version}/stele-${system}";
+            hash = release.hashes.${system};
+          };
+
+          dontUnpack = true;
+          dontBuild = true;
+
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 $src $out/bin/stele
+            runHook postInstall
+          '';
+
+          meta = with pkgs.lib; {
+            description = "stele — agent knowledge storage/retrieval infrastructure";
+            license = licenses.mit;
+            mainProgram = "stele";
+          };
+        };
+
+        packages.dev = pkgs.rustPlatform.buildRustPackage {
+          pname = "stele-dev";
+          version = release.version;
+          inherit src;
 
           cargoLock.lockFile = ./Cargo.lock;
 
@@ -33,7 +64,6 @@
             pkgs.openssl
           ];
 
-          # Skip tests during build (they need FNS backend)
           doCheck = false;
 
           meta = with pkgs.lib; {
@@ -54,6 +84,21 @@
           ];
 
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+        };
+
+        devShells.cross = let
+          crossToolchain = pkgs.rust-bin.stable.latest.default.override {
+            targets = [ "aarch64-unknown-linux-gnu" ];
+          };
+          inherit (pkgs.pkgsCross.aarch64-multiplatform) stdenv openssl;
+        in pkgs.mkShell {
+          buildInputs = [
+            crossToolchain
+            pkgs.pkg-config
+            openssl
+          ];
+
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${stdenv.cc}/bin/cc";
         };
       }
     );
