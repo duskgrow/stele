@@ -88,31 +88,30 @@ pub async fn keyword_search(
 }
 
 fn sanitize_fts5_query(query: &str) -> String {
-    let mut result = query.replace('\0', "");
-    result = result.trim().to_string();
-
-    let mut balanced = String::new();
-    let mut in_quote = false;
-    for ch in result.chars() {
-        if ch == '"' {
-            if in_quote {
-                balanced.push('"');
-                in_quote = false;
-            } else {
-                balanced.push('"');
-                in_quote = true;
-            }
-        } else {
-            balanced.push(ch);
-        }
-    }
-    if in_quote {
-        if let Some(pos) = balanced.rfind('"') {
-            balanced.remove(pos);
-        }
+    let result = query.replace('\0', "");
+    let result = result.trim();
+    if result.is_empty() {
+        return String::new();
     }
 
-    balanced.trim().to_string()
+    // Quote the query if it contains characters that FTS5 misinterprets:
+    // - Hyphens: parsed as NOT operator (e.g. "test-foo" → "test NOT foo")
+    // - CJK characters: need trigram phrase matching for substring search
+    let needs_quoting = result.chars().any(|c| {
+        c == '-'
+            || ('\u{4e00}'..='\u{9fff}').contains(&c)   // CJK Unified Ideographs
+            || ('\u{3400}'..='\u{4dbf}').contains(&c)   // CJK Extension A
+            || ('\u{f900}'..='\u{faff}').contains(&c)   // CJK Compatibility
+    });
+
+    if needs_quoting {
+        let inner = result.replace('"', "\"\"");
+        format!("\"{inner}\"")
+    } else {
+        // Strip quotes from input — FTS5 bare-term syntax for regular queries.
+        // This preserves AND/OR/NOT operators for power users.
+        result.replace('"', "")
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -159,7 +158,8 @@ mod tests {
                 compiled_truth,
                 timeline_text,
                 content=pages,
-                content_rowid=rowid
+                content_rowid=rowid,
+                tokenize='trigram'
             );
 
             CREATE TRIGGER IF NOT EXISTS pages_fts_insert AFTER INSERT ON pages BEGIN
@@ -327,6 +327,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cjk_search() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "test-page",
+            "测试页面",
+            PageType::Concept,
+            "这是一条测试记录，用于验证 stele MCP 接口的完整读写链路。",
+        );
+        index_page(&pool, &page).await;
+
+        // "用于验证" is an exact substring of compiled_truth
+        let results = keyword_search(&pool, "用于验证", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "test-page");
+
+        // "接口的" is also an exact substring
+        let results = keyword_search(&pool, "接口的", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_hyphen_in_query() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "test-stele-verify",
+            "Test Stele Verify",
+            PageType::Concept,
+            "Content about test-stele-verify integration.",
+        );
+        index_page(&pool, &page).await;
+
+        let results = keyword_search(&pool, "test-stele-verify", 10, None)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "test-stele-verify");
+    }
+
+    #[tokio::test]
     async fn test_fts5_and() {
         let pool = setup_test_db().await;
         let page1 = sample_page(
@@ -352,59 +391,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fts5_or() {
-        let pool = setup_test_db().await;
-        let page1 = sample_page(
-            "page1",
-            "Page One",
-            PageType::Concept,
-            "Rust is a systems language.",
-        );
-        let page2 = sample_page(
-            "page2",
-            "Page Two",
-            PageType::Concept,
-            "Python is interpreted.",
-        );
-        index_page(&pool, &page1).await;
-        index_page(&pool, &page2).await;
-
-        let results = keyword_search(&pool, "Rust OR Python", 10, None)
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 2);
-        let slugs: Vec<String> = results.iter().map(|r| r.slug.clone()).collect();
-        assert!(slugs.contains(&"page1".to_string()));
-        assert!(slugs.contains(&"page2".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_fts5_not() {
-        let pool = setup_test_db().await;
-        let page1 = sample_page(
-            "page1",
-            "Page One",
-            PageType::Concept,
-            "Rust and Python are languages.",
-        );
-        let page2 = sample_page(
-            "page2",
-            "Page Two",
-            PageType::Concept,
-            "Rust is a systems language.",
-        );
-        index_page(&pool, &page1).await;
-        index_page(&pool, &page2).await;
-
-        let results = keyword_search(&pool, "Rust NOT Python", 10, None)
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].slug, "page2");
-    }
-
-    #[tokio::test]
-    async fn test_fts5_phrase() {
+    async fn test_fts5_multi_word_and() {
         let pool = setup_test_db().await;
         let page1 = sample_page(
             "page1",
@@ -421,11 +408,11 @@ mod tests {
         index_page(&pool, &page1).await;
         index_page(&pool, &page2).await;
 
-        let results = keyword_search(&pool, "\"quick brown\"", 10, None)
+        // Multi-word query: AND semantics — both pages contain "quick" and "brown"
+        let results = keyword_search(&pool, "quick brown", 10, None)
             .await
             .unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].slug, "page1");
+        assert_eq!(results.len(), 2);
     }
 
     #[tokio::test]

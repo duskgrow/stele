@@ -85,7 +85,8 @@ impl IndexEngine {
                 compiled_truth,
                 timeline_text,
                 content=pages,
-                content_rowid=rowid
+                content_rowid=rowid,
+                tokenize='trigram'
             );
 
             CREATE TRIGGER IF NOT EXISTS pages_fts_insert AFTER INSERT ON pages BEGIN
