@@ -135,10 +135,13 @@ pub async fn handle_page_delete(
     index: &IndexEngine,
     slug: &str,
 ) -> Result<serde_json::Value> {
-    fns.delete_note(slug)
+    let slug = page_parser::normalize_slug(slug)?;
+    let fns_path = page_parser::to_fns_path(&slug);
+
+    fns.delete_note(&fns_path)
         .await
         .map_err(|e| Error::Fns(format!("failed to delete page '{slug}': {e}")))?;
-    index.remove_page(slug).await?;
+    index.remove_page(&slug).await?;
 
     Ok(json!({
         "slug": slug,
