@@ -84,7 +84,7 @@ pub fn serialize_page(page: &Page) -> Result<String> {
     let mut output = frontmatter::serialize(&page.frontmatter)?;
 
     output.push_str(&page.compiled_truth);
-    output.push_str("\n---\n");
+    output.push_str("\n\n---\n");
 
     for entry in &page.timeline {
         output.push_str(&format_timeline_entry(entry));
@@ -747,7 +747,7 @@ Some truth.
 
         let serialized = serialize_page(&page).unwrap();
         assert!(
-            serialized.ends_with("Some truth.\n---\n"),
+            serialized.ends_with("Some truth.\n\n---\n"),
             "serialized page should end with --- separator after compiled_truth, got:\n{serialized}"
         );
     }
