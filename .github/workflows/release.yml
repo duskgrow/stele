@@ -54,9 +54,19 @@ jobs:
         with:
           path: artifacts
 
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG.md
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
+          body_path: CHANGELOG.md
           files: artifacts/stele-x86_64-linux/stele-x86_64-linux
 
       - name: Generate sources.nix
