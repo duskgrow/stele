@@ -112,6 +112,32 @@ impl IndexEngine {
             .await
             .map_err(|e| Error::Storage(format!("schema init: {e}")))?;
 
+        sqlx::query(
+            "UPDATE pages SET slug = SUBSTR(slug, 1, LENGTH(slug) - 3) WHERE slug LIKE '%.md'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Storage(format!("migrate pages slug: {e}")))?;
+
+        sqlx::query(
+            "UPDATE links SET source_slug = SUBSTR(source_slug, 1, LENGTH(source_slug) - 3) WHERE source_slug LIKE '%.md'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Storage(format!("migrate links source_slug: {e}")))?;
+
+        sqlx::query(
+            "UPDATE links SET target_slug = SUBSTR(target_slug, 1, LENGTH(target_slug) - 3) WHERE target_slug LIKE '%.md'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Storage(format!("migrate links target_slug: {e}")))?;
+
+        sqlx::query("INSERT INTO pages_fts(pages_fts) VALUES('rebuild')")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Storage(format!("fts rebuild: {e}")))?;
+
         Ok(())
     }
 
@@ -354,6 +380,190 @@ mod tests {
         assert!(table_names.contains(&"pages".to_string()));
         assert!(table_names.contains(&"links".to_string()));
         assert!(table_names.contains(&"pages_fts".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_slug_migration_strips_md_suffix() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        // Seed pages with .md suffix using raw SQL
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("hello.md")
+        .bind("Hello")
+        .bind("Concept")
+        .bind("")
+        .bind("hash1")
+        .bind("Hello content")
+        .bind("# Hello")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"Hello","page_type":"Concept","tags":[],"related":[],"sources":[],"status":"Budding"}"#)
+        .bind("[]")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("world.md")
+        .bind("World")
+        .bind("Concept")
+        .bind("")
+        .bind("hash2")
+        .bind("World content")
+        .bind("# World")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"World","page_type":"Concept","tags":[],"related":[],"sources":[],"status":"Budding"}"#)
+        .bind("[]")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        // Seed a page without .md suffix (should be untouched)
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("no-suffix")
+        .bind("No Suffix")
+        .bind("Concept")
+        .bind("")
+        .bind("hash3")
+        .bind("No suffix content")
+        .bind("# No Suffix")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"No Suffix","page_type":"Concept","tags":[],"related":[],"sources":[],"status":"Budding"}"#)
+        .bind("[]")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        // Seed links with .md suffixes
+        sqlx::query("INSERT INTO links (source_slug, target_slug, link_type, context_snippet) VALUES (?1, ?2, ?3, ?4)")
+            .bind("hello.md")
+            .bind("world.md")
+            .bind("plain")
+            .bind("see also")
+            .execute(&engine.pool)
+            .await
+            .unwrap();
+
+        // Run init again to trigger migration
+        engine.init().await.unwrap();
+
+        // Verify pages slugs are stripped
+        let slugs: Vec<(String,)> = sqlx::query_as("SELECT slug FROM pages ORDER BY slug")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+        let slug_names: Vec<String> = slugs.into_iter().map(|r| r.0).collect();
+        assert_eq!(slug_names, vec!["hello", "no-suffix", "world"]);
+
+        // Verify link slugs are stripped
+        let links: Vec<(String, String)> = sqlx::query_as("SELECT source_slug, target_slug FROM links")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "hello");
+        assert_eq!(links[0].1, "world");
+
+        // Verify FTS still works after rebuild
+        let fts_results: Vec<(String,)> = sqlx::query_as("SELECT slug FROM pages_fts WHERE pages_fts MATCH ?1")
+            .bind("Hello")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+        let fts_slugs: Vec<String> = fts_results.into_iter().map(|r| r.0).collect();
+        assert!(fts_slugs.contains(&"hello".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_slug_migration_idempotent() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        // Seed a page with .md suffix
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("test.md")
+        .bind("Test")
+        .bind("Concept")
+        .bind("")
+        .bind("hash1")
+        .bind("Test content")
+        .bind("# Test")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"Test","page_type":"Concept","tags":[],"related":[],"sources":[],"status":"Budding"}"#)
+        .bind("[]")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO links (source_slug, target_slug, link_type, context_snippet) VALUES (?1, ?2, ?3, ?4)")
+            .bind("test.md")
+            .bind("test.md")
+            .bind("plain")
+            .bind("self")
+            .execute(&engine.pool)
+            .await
+            .unwrap();
+
+        // First migration
+        engine.init().await.unwrap();
+
+        let slugs_before: Vec<(String,)> = sqlx::query_as("SELECT slug FROM pages")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+
+        // Second migration (idempotency check)
+        engine.init().await.unwrap();
+
+        let slugs_after: Vec<(String,)> = sqlx::query_as("SELECT slug FROM pages")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+
+        assert_eq!(slugs_before, slugs_after);
+
+        // Verify links are still correct
+        let links: Vec<(String, String)> = sqlx::query_as("SELECT source_slug, target_slug FROM links")
+            .fetch_all(&engine.pool)
+            .await
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, "test");
+        assert_eq!(links[0].1, "test");
     }
 
     #[tokio::test]

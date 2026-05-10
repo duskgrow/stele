@@ -2,6 +2,7 @@ use crate::fns::FnsClient;
 use crate::graph;
 use crate::index::IndexEngine;
 use crate::ops::sync;
+use crate::parser::page::validate_slug;
 use crate::types::{Error, Result};
 use serde_json::json;
 
@@ -78,7 +79,7 @@ async fn run_lint(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
                 });
             }
 
-            if !is_valid_slug(&slug) {
+            if validate_slug(&slug).is_err() {
                 issues.push(MaintainIssue {
                     severity: "error".to_string(),
                     scope: "lint".to_string(),
@@ -91,12 +92,6 @@ async fn run_lint(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
     Ok(issues)
 }
 
-fn is_valid_slug(slug: &str) -> bool {
-    !slug.is_empty()
-        && slug
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
 
 async fn run_orphans(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
     let orphans = graph::find_orphans(index.pool()).await?;
@@ -186,6 +181,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_maintain_lint_valid_slugs_not_flagged() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let page = sample_page("wiki/bugs/issue", "Wiki Bugs", PageType::Concept, "Content");
+        index.index_page(&page).await.unwrap();
+
+        let page2 = sample_page("my-page", "My Page", PageType::Concept, "Content");
+        index.index_page(&page2).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_slug_issue = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["message"].as_str().unwrap().contains("invalid slug format")
+        });
+        assert!(!has_slug_issue, "valid path-style slugs should not be flagged");
+    }
+
+    #[tokio::test]
+    async fn test_maintain_lint_invalid_slug_flagged() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let mut page = sample_page("bad_slug!", "Bad Slug", PageType::Concept, "Content");
+        page.frontmatter.title = "".to_string();
+        index.index_page(&page).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_slug_issue = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["severity"] == "error"
+                && i["message"].as_str().unwrap().contains("invalid slug format")
+        });
+        assert!(has_slug_issue, "invalid slug should be flagged");
+    }
+
+    #[tokio::test]
     async fn test_maintain_orphans() {
         let index = IndexEngine::new(":memory:").await.unwrap();
 
@@ -252,6 +286,28 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("nonexistent-page"));
+    }
+
+    #[tokio::test]
+    async fn test_maintain_valid_backlinks_not_flagged() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let page_a = sample_page("page-a", "Page A", PageType::Concept, "Content A");
+        let page_b = sample_page("page-b", "Page B", PageType::Concept, "Content B");
+        index.index_page(&page_a).await.unwrap();
+        index.index_page(&page_b).await.unwrap();
+
+        let links = vec![Link {
+            source_slug: "page-a".to_string(),
+            target_slug: "page-b".to_string(),
+            link_type: LinkType::Plain,
+            context_snippet: None,
+        }];
+        index.update_links("page-a", &links).await.unwrap();
+
+        let result = handle_maintain(&index, Some("backlinks")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+        assert_eq!(issues.len(), 0, "valid links should not be reported as broken");
     }
 
     #[tokio::test]

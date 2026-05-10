@@ -94,15 +94,15 @@ fn sanitize_fts5_query(query: &str) -> String {
         return String::new();
     }
 
-    // Quote the query if it contains characters that FTS5 misinterprets:
-    // - Hyphens: parsed as NOT operator (e.g. "test-foo" → "test NOT foo")
-    // - CJK characters: need trigram phrase matching for substring search
-    let needs_quoting = result.chars().any(|c| {
-        c == '-'
-            || ('\u{4e00}'..='\u{9fff}').contains(&c)   // CJK Unified Ideographs
-            || ('\u{3400}'..='\u{4dbf}').contains(&c)   // CJK Extension A
-            || ('\u{f900}'..='\u{faff}').contains(&c)   // CJK Compatibility
-    });
+    // Only quote when FTS5 would misparse the query as an operator.
+    // Hyphens get parsed as NOT ("test-foo" → "test NOT foo"), so they need quoting.
+    //
+    // CJK characters must NOT be quoted. With the trigram tokenizer:
+    //   - Quoted "测试记录" → exact phrase match (only matches that exact sequence)
+    //   - Unquoted 测试记录  → substring match   (matches any text containing those chars)
+    // CJK substring search requires bare (unquoted) terms so the trigram tokenizer
+    // can match partial substrings rather than enforcing exact-phrase ordering.
+    let needs_quoting = result.contains('-');
 
     if needs_quoting {
         let inner = result.replace('"', "\"\"");
@@ -466,5 +466,100 @@ mod tests {
 
         let results = keyword_search(&pool, "Common", 200, None).await.unwrap();
         assert_eq!(results.len(), 5);
-        }
+    }
+
+    #[test]
+    fn test_sanitize_cjk_not_quoted() {
+        assert_eq!(sanitize_fts5_query("测试记录"), "测试记录");
+        assert_eq!(sanitize_fts5_query("接口验证"), "接口验证");
+        assert_eq!(sanitize_fts5_query("世界"), "世界");
+    }
+
+    #[test]
+    fn test_sanitize_hyphen_quoted() {
+        assert_eq!(sanitize_fts5_query("test-stele-verify"), "\"test-stele-verify\"");
+    }
+
+    #[test]
+    fn test_sanitize_english_operators_preserved() {
+        assert_eq!(sanitize_fts5_query("Rust AND Python"), "Rust AND Python");
+        assert_eq!(sanitize_fts5_query("Rust OR Python"), "Rust OR Python");
+        assert_eq!(sanitize_fts5_query("NOT deprecated"), "NOT deprecated");
+    }
+
+    #[tokio::test]
+    async fn test_cjk_substring_search() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "cjk-page",
+            "全量验证",
+            PageType::Concept,
+            "这是全量验证的测试记录",
+        );
+        index_page(&pool, &page).await;
+
+        let results = keyword_search(&pool, "测试记录", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "cjk-page");
+    }
+
+    #[tokio::test]
+    async fn test_cjk_exact_match() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "cjk-exact",
+            "接口页面",
+            PageType::Concept,
+            "接口验证是必要的步骤",
+        );
+        index_page(&pool, &page).await;
+
+        let results = keyword_search(&pool, "接口验证", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "cjk-exact");
+    }
+
+    #[tokio::test]
+    async fn test_mixed_cjk_english_search() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "mixed-page",
+            "Mixed Content",
+            PageType::Concept,
+            "hello世界欢迎你",
+        );
+        index_page(&pool, &page).await;
+
+        let results = keyword_search(&pool, "世界欢", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "mixed-page");
+    }
+
+    #[tokio::test]
+    async fn test_cjk_full_content_match() {
+        let pool = setup_test_db().await;
+        let page = sample_page(
+            "full-cjk",
+            "Full CJK",
+            PageType::Concept,
+            "verification of the system is complete",
+        );
+        index_page(&pool, &page).await;
+
+        let results = keyword_search(&pool, "verification", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "full-cjk");
+    }
+
+    #[tokio::test]
+    async fn test_fts5_or() {
+        let pool = setup_test_db().await;
+        let page1 = sample_page("p1", "Page One", PageType::Concept, "Rust is fast.");
+        let page2 = sample_page("p2", "Page Two", PageType::Concept, "Python is flexible.");
+        index_page(&pool, &page1).await;
+        index_page(&pool, &page2).await;
+
+        let results = keyword_search(&pool, "Rust OR Python", 10, None).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
 }

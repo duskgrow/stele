@@ -17,6 +17,7 @@ use rmcp::{
 pub mod stdio;
 
 use crate::ops::{Operation, OperationRegistry};
+use crate::types::TimelineAppendInput;
 
 /// The MCP server implementation exposing stele operations as tools.
 #[derive(Clone)]
@@ -68,24 +69,57 @@ impl SteleMcpServer {
             args.get(key).and_then(|v| v.as_u64()).map(|n| n as usize)
         };
 
+        let get_opt_value = |key: &str| -> Option<serde_json::Value> {
+            args.get(key).cloned()
+        };
+
         match name {
             "page.get" => Ok(Operation::PageGet {
                 slug: get_string("slug")?,
             }),
-            "page.put" => Ok(Operation::PagePut {
-                slug: get_string("slug")?,
-                content: get_string("content")?,
-                etag: get_opt_string("etag"),
-            }),
+            "page.put" => {
+                let slug = get_string("slug")?;
+                let body = get_string("body")?;
+                let frontmatter_updates = get_opt_value("frontmatter");
+                let etag = get_opt_string("etag");
+
+                let timeline_obj = args.get("timeline").ok_or_else(|| {
+                    ErrorData::invalid_params(
+                        "missing required field: timeline".to_string(),
+                        None,
+                    )
+                })?;
+                let timeline_content = timeline_obj
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| {
+                        ErrorData::invalid_params(
+                            "missing required field: timeline.content".to_string(),
+                            None,
+                        )
+                    })?;
+                let timeline_agent = timeline_obj
+                    .get("agent")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(Operation::PagePut {
+                    slug,
+                    body,
+                    frontmatter_updates,
+                    timeline_append: TimelineAppendInput {
+                        content: timeline_content,
+                        agent: timeline_agent,
+                    },
+                    etag,
+                })
+            }
             "page.delete" => Ok(Operation::PageDelete {
                 slug: get_string("slug")?,
             }),
             "page.list" => Ok(Operation::PageList {
                 dir: get_opt_string("dir"),
-            }),
-            "page.append" => Ok(Operation::Append {
-                slug: get_string("slug")?,
-                content: get_string("content")?,
             }),
             "search" => Ok(Operation::Search {
                 query: get_string("query")?,
@@ -164,14 +198,13 @@ mod tests {
         let metas = registry.list_operations();
         let tools: Vec<Tool> = metas.iter().map(SteleMcpServer::meta_to_tool).collect();
 
-        assert_eq!(tools.len(), 12, "expected 12 tools, got {}", tools.len());
+        assert_eq!(tools.len(), 11, "expected 11 tools, got {}", tools.len());
 
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
         assert!(names.contains(&"page.get".to_string()));
         assert!(names.contains(&"page.put".to_string()));
         assert!(names.contains(&"page.delete".to_string()));
         assert!(names.contains(&"page.list".to_string()));
-        assert!(names.contains(&"page.append".to_string()));
         assert!(names.contains(&"search".to_string()));
         assert!(names.contains(&"graph.query".to_string()));
         assert!(names.contains(&"graph.backlinks".to_string()));
@@ -228,17 +261,71 @@ mod tests {
     async fn test_parse_operation_page_put() {
         let args = rmcp::object!({
             "slug": "test-page",
-            "content": "# Hello"
+            "body": "# Hello",
+            "timeline": { "content": "Created page" }
         });
         let op = SteleMcpServer::parse_operation("page.put", Some(args)).unwrap();
         match op {
-            Operation::PagePut { slug, content, etag } => {
+            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
                 assert_eq!(slug, "test-page");
-                assert_eq!(content, "# Hello");
+                assert_eq!(body, "# Hello");
+                assert!(frontmatter_updates.is_none());
+                assert_eq!(timeline_append.content, "Created page");
+                assert_eq!(timeline_append.agent, None);
                 assert_eq!(etag, None);
             }
             other => panic!("expected PagePut, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_parse_operation_page_put_full() {
+        let args = rmcp::object!({
+            "slug": "test-page",
+            "body": "Body content",
+            "frontmatter": { "title": "Test", "status": "Budding" },
+            "timeline": { "content": "Updated", "agent": "claude" },
+            "etag": "abc123"
+        });
+        let op = SteleMcpServer::parse_operation("page.put", Some(args)).unwrap();
+        match op {
+            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
+                assert_eq!(slug, "test-page");
+                assert_eq!(body, "Body content");
+                assert!(frontmatter_updates.is_some());
+                let fm = frontmatter_updates.unwrap();
+                assert_eq!(fm["title"].as_str().unwrap(), "Test");
+                assert_eq!(timeline_append.content, "Updated");
+                assert_eq!(timeline_append.agent, Some("claude".to_string()));
+                assert_eq!(etag, Some("abc123".to_string()));
+            }
+            other => panic!("expected PagePut, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_operation_page_put_missing_timeline() {
+        let args = rmcp::object!({
+            "slug": "test-page",
+            "body": "# Hello"
+        });
+        let result = SteleMcpServer::parse_operation("page.put", Some(args));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("missing required field: timeline"));
+    }
+
+    #[tokio::test]
+    async fn test_parse_operation_page_put_missing_timeline_content() {
+        let args = rmcp::object!({
+            "slug": "test-page",
+            "body": "# Hello",
+            "timeline": { "agent": "claude" }
+        });
+        let result = SteleMcpServer::parse_operation("page.put", Some(args));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("timeline.content"));
     }
 
     #[tokio::test]
@@ -258,19 +345,6 @@ mod tests {
         match op {
             Operation::PageList { dir } => assert_eq!(dir, Some("notes".into())),
             other => panic!("expected PageList, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_page_append() {
-        let args = rmcp::object!({"slug": "test-page", "content": "appended text"});
-        let op = SteleMcpServer::parse_operation("page.append", Some(args)).unwrap();
-        match op {
-            Operation::Append { slug, content } => {
-                assert_eq!(slug, "test-page");
-                assert_eq!(content, "appended text");
-            }
-            other => panic!("expected Append, got {:?}", other),
         }
     }
 

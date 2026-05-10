@@ -24,7 +24,7 @@ pub fn parse_page(raw_markdown: &str, slug: &str) -> Result<Page> {
     })
 }
 
-fn validate_slug(slug: &str) -> Result<()> {
+pub fn validate_slug(slug: &str) -> Result<()> {
     if slug.is_empty() {
         return Err(Error::Parse("slug must not be empty".to_string()));
     }
@@ -55,18 +55,40 @@ fn validate_slug(slug: &str) -> Result<()> {
     Ok(())
 }
 
+/// Normalize a slug by stripping a trailing `.md` extension if present.
+///
+/// Returns an error if stripping `.md` would produce an empty string.
+pub fn normalize_slug(slug: &str) -> Result<String> {
+    match slug.strip_suffix(".md") {
+        Some(stripped) if stripped.is_empty() => Err(Error::Parse(
+            "normalizing slug would produce an empty string".to_string(),
+        )),
+        Some(stripped) => Ok(stripped.to_string()),
+        None => Ok(slug.to_string()),
+    }
+}
+
+/// Convert a normalized slug to an FNS path by ensuring it ends with `.md`.
+///
+/// If the slug already ends with `.md`, it is returned unchanged.
+pub fn to_fns_path(slug: &str) -> String {
+    if slug.ends_with(".md") {
+        slug.to_string()
+    } else {
+        format!("{slug}.md")
+    }
+}
+
 /// Serialize a `Page` back to markdown with frontmatter and timeline.
 pub fn serialize_page(page: &Page) -> Result<String> {
     let mut output = frontmatter::serialize(&page.frontmatter)?;
 
     output.push_str(&page.compiled_truth);
+    output.push_str("\n---\n");
 
-    if !page.timeline.is_empty() {
-        output.push_str("\n---\n");
-        for entry in &page.timeline {
-            output.push_str(&format_timeline_entry(entry));
-            output.push('\n');
-        }
+    for entry in &page.timeline {
+        output.push_str(&format_timeline_entry(entry));
+        output.push('\n');
     }
 
     Ok(output)
@@ -74,9 +96,34 @@ pub fn serialize_page(page: &Page) -> Result<String> {
 
 fn split_body(body: &str) -> (String, Vec<TimelineEntry>) {
     let lines: Vec<&str> = body.lines().collect();
-    let separator_idx = lines.iter().position(|line| line.trim() == "---");
+    let mut last_separator_idx = None;
+    let mut in_code_fence = false;
+    let mut fence_char = b'\0';
+    let mut fence_count = 0usize;
 
-    match separator_idx {
+    for (idx, line) in lines.iter().enumerate() {
+        if in_code_fence {
+            if let Some((c, count)) = parse_fence(line) {
+                if c == fence_char && count >= fence_count {
+                    in_code_fence = false;
+                }
+            }
+            continue;
+        }
+
+        if let Some((c, count)) = parse_fence(line) {
+            in_code_fence = true;
+            fence_char = c;
+            fence_count = count;
+            continue;
+        }
+
+        if line.trim() == "---" {
+            last_separator_idx = Some(idx);
+        }
+    }
+
+    match last_separator_idx {
         Some(idx) => {
             let truth = lines[..idx].join("\n");
             let timeline_section = lines[idx + 1..].join("\n");
@@ -85,6 +132,32 @@ fn split_body(body: &str) -> (String, Vec<TimelineEntry>) {
         }
         None => (body.trim().to_string(), Vec::new()),
     }
+}
+
+fn parse_fence(line: &str) -> Option<(u8, usize)> {
+    let trimmed = line.trim_start();
+    let bytes = trimmed.as_bytes();
+
+    if bytes.len() < 3 {
+        return None;
+    }
+
+    let c = bytes[0];
+    if c != b'`' && c != b'~' {
+        return None;
+    }
+
+    let count = bytes.iter().take_while(|&&b| b == c).count();
+    if count < 3 {
+        return None;
+    }
+
+    let rest = &trimmed[count..];
+    if rest.contains(c as char) {
+        return None;
+    }
+
+    Some((c, count))
 }
 
 fn parse_timeline(section: &str) -> Vec<TimelineEntry> {
@@ -121,16 +194,28 @@ fn parse_timeline_line(rest: &str) -> Option<TimelineEntry> {
 
     if after_date.starts_with('[') {
         if let Some(close) = after_date.find(']') {
-            let url = &after_date[1..close];
-            let after_url = after_date[close + 1..].trim_start();
+            let bracket_content = &after_date[1..close];
+            let after_bracket = after_date[close + 1..].trim_start();
 
-            if let Some(content) = after_url.strip_prefix(':') {
-                return Some(TimelineEntry {
-                    date: date.to_string(),
-                    source_url: Some(url.to_string()),
-                    content: content.trim().to_string(),
-                    agent: None,
-                });
+            if let Some(content) = after_bracket.strip_prefix(':') {
+                let is_url = bracket_content.starts_with("http://")
+                    || bracket_content.starts_with("https://");
+
+                if is_url {
+                    return Some(TimelineEntry {
+                        date: date.to_string(),
+                        source_url: Some(bracket_content.to_string()),
+                        content: content.trim().to_string(),
+                        agent: None,
+                    });
+                } else {
+                    return Some(TimelineEntry {
+                        date: date.to_string(),
+                        source_url: None,
+                        content: content.trim().to_string(),
+                        agent: Some(bracket_content.to_string()),
+                    });
+                }
             }
         }
     }
@@ -160,9 +245,10 @@ fn is_valid_date(s: &str) -> bool {
 }
 
 fn format_timeline_entry(entry: &TimelineEntry) -> String {
-    match &entry.source_url {
-        Some(url) => format!("- {} [{}]: {}", entry.date, url, entry.content),
-        None => format!("- {}: {}", entry.date, entry.content),
+    match (&entry.source_url, &entry.agent) {
+        (Some(url), _) => format!("- {} [{}]: {}", entry.date, url, entry.content),
+        (None, Some(agent)) => format!("- {} [{}]: {}", entry.date, agent, entry.content),
+        (None, None) => format!("- {}: {}", entry.date, entry.content),
     }
 }
 
@@ -486,5 +572,345 @@ Truth.
             err.contains("must not start or end with '/'"),
             "expected trailing slash error, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_normalize_slug() {
+        assert_eq!(normalize_slug("wiki/hello.md").unwrap(), "wiki/hello");
+        assert_eq!(normalize_slug("wiki/hello").unwrap(), "wiki/hello");
+        assert_eq!(normalize_slug("readme.md.md").unwrap(), "readme.md");
+        assert_eq!(
+            normalize_slug("wiki/v2.0-notes.md").unwrap(),
+            "wiki/v2.0-notes"
+        );
+    }
+
+    #[test]
+    fn test_normalize_slug_errors() {
+        assert!(normalize_slug(".md").is_err());
+    }
+
+    #[test]
+    fn test_to_fns_path() {
+        assert_eq!(to_fns_path("wiki/hello"), "wiki/hello.md");
+        assert_eq!(to_fns_path("wiki/hello.md"), "wiki/hello.md");
+    }
+
+    #[test]
+    fn test_validate_slug_is_pub() {
+        assert!(validate_slug("valid-slug").is_ok());
+        assert!(validate_slug("").is_err());
+    }
+
+    #[test]
+    fn test_split_body_last_separator_wins() {
+        let raw = "\
+---
+title: Test
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Content above the hr.
+
+---
+
+More content below the hr.
+
+---
+
+- 2024-01-01: Timeline entry
+";
+        let page = parse_page(raw, "last-sep").unwrap();
+
+        assert!(
+            page.compiled_truth.contains("Content above the hr."),
+            "compiled_truth should contain content above first hr"
+        );
+        assert!(
+            page.compiled_truth.contains("More content below the hr."),
+            "compiled_truth should contain content below first hr but above separator"
+        );
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page.timeline[0].date, "2024-01-01");
+    }
+
+    #[test]
+    fn test_split_body_ignores_separator_in_backtick_fence() {
+        let raw = "\
+---
+title: Fenced
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Some content.
+
+```markdown
+---
+```
+
+Real separator here.
+
+---
+
+- 2024-06-15: Real timeline
+";
+        let page = parse_page(raw, "fenced-bt").unwrap();
+
+        assert!(
+            page.compiled_truth.contains("```markdown"),
+            "compiled_truth should contain the code fence"
+        );
+        assert!(
+            page.compiled_truth.contains("Real separator here."),
+            "compiled_truth should contain text between fence and real separator"
+        );
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page.timeline[0].date, "2024-06-15");
+    }
+
+    #[test]
+    fn test_split_body_ignores_separator_in_tilde_fence() {
+        let raw = "\
+---
+title: Tilde Fence
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Content.
+
+~~~
+---
+~~~
+
+After fence.
+
+---
+
+- 2024-07-20: Tilde test
+";
+        let page = parse_page(raw, "fenced-tilde").unwrap();
+
+        assert!(
+            page.compiled_truth.contains("After fence."),
+            "compiled_truth should contain text between fence and real separator"
+        );
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page.timeline[0].date, "2024-07-20");
+    }
+
+    #[test]
+    fn test_body_no_separator_all_truth() {
+        let raw = "\
+---
+title: No Sep
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Just some content without any separator.
+";
+        let page = parse_page(raw, "no-sep").unwrap();
+
+        assert_eq!(
+            page.compiled_truth,
+            "Just some content without any separator."
+        );
+        assert!(page.timeline.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_always_emits_separator() {
+        let raw = "\
+---
+title: Empty Timeline
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Some truth.
+";
+        let page = parse_page(raw, "always-sep").unwrap();
+        assert!(page.timeline.is_empty());
+
+        let serialized = serialize_page(&page).unwrap();
+        assert!(
+            serialized.ends_with("Some truth.\n---\n"),
+            "serialized page should end with --- separator after compiled_truth, got:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn test_serialize_roundtrip_empty_timeline() {
+        let raw = "\
+---
+title: RT Empty
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Some truth.
+";
+        let page = parse_page(raw, "rt-empty").unwrap();
+        let serialized = serialize_page(&page).unwrap();
+        let page2 = parse_page(&serialized, "rt-empty").unwrap();
+        let serialized2 = serialize_page(&page2).unwrap();
+
+        assert_eq!(page.compiled_truth, page2.compiled_truth);
+        assert_eq!(page.timeline.len(), page2.timeline.len());
+        assert_eq!(serialized, serialized2);
+    }
+
+    #[test]
+    fn test_split_body_no_separator_with_code_fence() {
+        let raw = "\
+---
+title: Fence No Sep
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+```rust
+fn main() {}
+```
+";
+        let page = parse_page(raw, "fence-no-sep").unwrap();
+
+        assert!(page.compiled_truth.contains("```rust"));
+        assert!(page.timeline.is_empty());
+    }
+
+    #[test]
+    fn test_unclosed_code_fence_treats_rest_as_inside() {
+        let raw = "\
+---
+title: Unclosed
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+Before fence.
+
+```
+---
+- 2024-01-01: Not a timeline
+";
+        let page = parse_page(raw, "unclosed").unwrap();
+
+        assert!(page.timeline.is_empty(), "unclosed fence should hide --- and timeline entries");
+        assert!(
+            page.compiled_truth.contains("Before fence."),
+            "compiled_truth should contain text before the fence"
+        );
+    }
+
+    #[test]
+    fn test_timeline_agent_parsed() {
+        let raw = "\
+---
+title: Agent Test
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+---
+- 2026-05-09 [claude]: update
+";
+        let page = parse_page(raw, "agent-test").unwrap();
+
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page.timeline[0].date, "2026-05-09");
+        assert_eq!(page.timeline[0].content, "update");
+        assert_eq!(page.timeline[0].agent, Some("claude".to_string()));
+        assert_eq!(page.timeline[0].source_url, None);
+    }
+
+    #[test]
+    fn test_timeline_source_url_still_parsed() {
+        let raw = "\
+---
+title: URL Test
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+---
+- 2024-06-15 [https://source.com]: entry
+";
+        let page = parse_page(raw, "url-test").unwrap();
+
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page.timeline[0].date, "2024-06-15");
+        assert_eq!(page.timeline[0].content, "entry");
+        assert_eq!(page.timeline[0].source_url, Some("https://source.com".to_string()));
+        assert_eq!(page.timeline[0].agent, None);
+    }
+
+    #[test]
+    fn test_format_timeline_entry_with_agent() {
+        let entry = TimelineEntry {
+            date: "2026-05-09".to_string(),
+            content: "update".to_string(),
+            agent: Some("claude".to_string()),
+            source_url: None,
+        };
+        assert_eq!(format_timeline_entry(&entry), "- 2026-05-09 [claude]: update");
+    }
+
+    #[test]
+    fn test_format_timeline_entry_with_source_url() {
+        let entry = TimelineEntry {
+            date: "2024-06-15".to_string(),
+            content: "entry".to_string(),
+            agent: None,
+            source_url: Some("https://source.com".to_string()),
+        };
+        assert_eq!(format_timeline_entry(&entry), "- 2024-06-15 [https://source.com]: entry");
+    }
+
+    #[test]
+    fn test_agent_roundtrip() {
+        let raw = "\
+---
+title: Roundtrip
+page_type: Concept
+tags: []
+related: []
+sources: []
+status: Seedling
+---
+---
+- 2026-05-09 [claude]: update
+";
+        let page = parse_page(raw, "roundtrip").unwrap();
+        let serialized = serialize_page(&page).unwrap();
+        let page2 = parse_page(&serialized, "roundtrip").unwrap();
+
+        assert_eq!(page.timeline.len(), 1);
+        assert_eq!(page2.timeline.len(), 1);
+        assert_eq!(page.timeline[0].agent, page2.timeline[0].agent);
+        assert_eq!(page.timeline[0].agent, Some("claude".to_string()));
     }
 }

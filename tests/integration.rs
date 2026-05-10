@@ -8,6 +8,7 @@ use stele::config::{Config, FnsConfig, IndexConfig, ServerConfig};
 use stele::fns::FnsClient;
 use stele::index::IndexEngine;
 use stele::ops::{Operation, OperationRegistry};
+use stele::types::TimelineAppendInput;
 
 fn test_config(fns_url: &str) -> Config {
     Config {
@@ -70,10 +71,15 @@ fn fns_success_response() -> serde_json::Value {
 }
 
 async fn setup_note_get_mock(server: &MockServer, slug: &str, content: &str) {
+    let fns_path = if slug.ends_with(".md") {
+        slug.to_string()
+    } else {
+        format!("{slug}.md")
+    };
     Mock::given(method("GET"))
         .and(path("/api/note"))
         .and(query_param("vault", "test-vault"))
-        .and(query_param("path", slug))
+        .and(query_param("path", fns_path))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(fns_string_response(content)),
         )
@@ -81,7 +87,32 @@ async fn setup_note_get_mock(server: &MockServer, slug: &str, content: &str) {
         .await;
 }
 
-async fn setup_note_put_mock(server: &MockServer, slug: &str) {
+fn sample_frontmatter(title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "title": title,
+        "page_type": "Entity",
+        "tags": ["test"],
+        "related": [],
+        "sources": [],
+        "status": "Evergreen"
+    })
+}
+
+fn sample_timeline(content: &str) -> TimelineAppendInput {
+    TimelineAppendInput {
+        content: content.into(),
+        agent: None,
+    }
+}
+
+async fn setup_note_put_mock(server: &MockServer, _slug: &str) {
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
+
     Mock::given(method("POST"))
         .and(path("/api/note"))
         .respond_with(
@@ -91,7 +122,7 @@ async fn setup_note_put_mock(server: &MockServer, slug: &str) {
         .await;
 }
 
-async fn setup_note_delete_mock(server: &MockServer, slug: &str) {
+async fn setup_note_delete_mock(server: &MockServer, _slug: &str) {
     Mock::given(method("DELETE"))
         .and(path("/api/note"))
         .respond_with(
@@ -136,20 +167,43 @@ async fn setup_folders_mock(server: &MockServer, folders: &[&str]) {
         .await;
 }
 
+async fn test_registry_with_index(fns_url: &str) -> (OperationRegistry, Arc<IndexEngine>) {
+    let fns = Arc::new(FnsClient::new(
+        fns_url.to_string(),
+        "test-token".into(),
+        "test-vault".into(),
+    ));
+    let index = Arc::new(test_index().await);
+    let config = test_config(fns_url);
+    let reg = OperationRegistry::new(fns, index.clone(), config);
+    (reg, index)
+}
+
+fn markdown_with_timeline(title: &str, body: &str, entries: &[(&str, &str)]) -> String {
+    let timeline = entries
+        .iter()
+        .map(|(date, content)| format!("- {date}: {content}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\n{}\n---\n{}\n",
+        title, body, timeline
+    )
+}
+
 #[tokio::test]
 async fn test_tools_list_returns_all_operations() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
 
     let ops = reg.list_operations();
-    assert_eq!(ops.len(), 12);
+    assert_eq!(ops.len(), 11);
 
     let names: Vec<&str> = ops.iter().map(|o| o.name.as_str()).collect();
     assert!(names.contains(&"page.get"));
     assert!(names.contains(&"page.put"));
     assert!(names.contains(&"page.delete"));
     assert!(names.contains(&"page.list"));
-    assert!(names.contains(&"page.append"));
     assert!(names.contains(&"search"));
     assert!(names.contains(&"graph.query"));
     assert!(names.contains(&"graph.backlinks"));
@@ -178,7 +232,9 @@ async fn test_page_put_then_get_roundtrip() {
     let put_result = reg
         .execute(Operation::PagePut {
             slug: "test-page".into(),
-            content: content.clone(),
+            body: "Compiled truth content.\n".into(),
+            frontmatter_updates: Some(sample_frontmatter("Test Page")),
+            timeline_append: sample_timeline("Created"),
             etag: None,
         })
         .await
@@ -193,9 +249,10 @@ async fn test_page_put_then_get_roundtrip() {
         .await
         .expect("get should succeed");
     assert_eq!(get_result["slug"], "test-page");
-    assert_eq!(get_result["content"].as_str().unwrap(), content);
+    assert!(get_result["body"].is_string());
     assert!(get_result["frontmatter"].is_object());
-    assert!(get_result["metadata"].is_object());
+    assert!(get_result["timeline"].is_array());
+    assert!(get_result["content_hash"].is_string());
 }
 
 #[tokio::test]
@@ -209,7 +266,9 @@ async fn test_page_put_auto_indexes() {
 
     reg.execute(Operation::PagePut {
         slug: "indexed-page".into(),
-        content,
+        body: "Searchable content about rust.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Indexed Page")),
+        timeline_append: sample_timeline("Created"),
         etag: None,
     })
     .await
@@ -240,7 +299,9 @@ async fn test_page_put_extracts_wikilinks() {
     let put_result = reg
         .execute(Operation::PagePut {
             slug: "source-page".into(),
-            content,
+            body: "This references [[target-page]].\n".into(),
+            frontmatter_updates: Some(sample_frontmatter("Link Page")),
+            timeline_append: sample_timeline("Created"),
             etag: None,
         })
         .await
@@ -275,7 +336,9 @@ async fn test_page_delete_removes_from_index() {
 
     reg.execute(Operation::PagePut {
         slug: "delete-me".into(),
-        content,
+        body: "Temporary content.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Delete Me")),
+        timeline_append: sample_timeline("Created"),
         etag: None,
     })
     .await
@@ -302,6 +365,7 @@ async fn test_page_list_returns_files() {
     let reg = test_registry(&server.uri()).await;
 
     setup_list_mock(&server, &["alpha.md", "beta.md", "gamma.md"]).await;
+    setup_folders_mock(&server, &[]).await;
 
     let result = reg
         .execute(Operation::PageList { dir: None })
@@ -695,7 +759,9 @@ async fn test_page_etag_conflict() {
 
     reg.execute(Operation::PagePut {
         slug: "etag-page".into(),
-        content: content.clone(),
+        body: "Content.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Etag Page")),
+        timeline_append: sample_timeline("Created"),
         etag: None,
     })
     .await
@@ -704,7 +770,9 @@ async fn test_page_etag_conflict() {
     let result = reg
         .execute(Operation::PagePut {
             slug: "etag-page".into(),
-            content,
+            body: "Content.\n".into(),
+            frontmatter_updates: Some(sample_frontmatter("Etag Page")),
+            timeline_append: sample_timeline("Updated"),
             etag: Some("wrong-etag-hash".into()),
         })
         .await;
@@ -743,4 +811,374 @@ async fn test_fns_error_propagates() {
         "expected FNS error, got: {}",
         err_str
     );
+}
+
+#[tokio::test]
+async fn test_structured_api_roundtrip() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    setup_note_put_mock(&server, "structured-test").await;
+
+    let put_result = reg
+        .execute(Operation::PagePut {
+            slug: "structured-test".into(),
+            body: "Structured body content.\n".into(),
+            frontmatter_updates: Some(sample_frontmatter("Structured Test")),
+            timeline_append: sample_timeline("Created via API"),
+            etag: None,
+        })
+        .await
+        .expect("put should succeed");
+
+    assert_eq!(put_result["slug"], "structured-test");
+    assert_eq!(put_result["indexed"], true);
+    assert!(put_result["content_hash"].is_string());
+    assert_eq!(put_result["timeline_count"], 1);
+
+    let content_with_timeline = format!(
+        "---\ntitle: Structured Test\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\nStructured body content.\n---\n- {}: Created via API\n",
+        today
+    );
+    setup_note_get_mock(&server, "structured-test", &content_with_timeline).await;
+
+    let get_result = reg
+        .execute(Operation::PageGet {
+            slug: "structured-test".into(),
+        })
+        .await
+        .expect("get should succeed");
+
+    assert_eq!(get_result["slug"], "structured-test");
+    assert_eq!(get_result["body"], "Structured body content.");
+    let fm = get_result["frontmatter"].as_object().unwrap();
+    assert_eq!(fm["title"], "Structured Test");
+    assert_eq!(fm["page_type"], "Entity");
+    assert!(fm["tags"].is_array());
+    let timeline = get_result["timeline"].as_array().unwrap();
+    assert_eq!(timeline.len(), 1);
+    assert_eq!(timeline[0]["content"], "Created via API");
+    assert!(get_result["content_hash"].is_string());
+}
+
+#[tokio::test]
+async fn test_timeline_append_only() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    setup_note_put_mock(&server, "timeline-test").await;
+
+    let result1 = reg
+        .execute(Operation::PagePut {
+            slug: "timeline-test".into(),
+            body: "Initial body.\n".into(),
+            frontmatter_updates: Some(sample_frontmatter("Timeline Test")),
+            timeline_append: sample_timeline("First entry"),
+            etag: None,
+        })
+        .await
+        .expect("first put should succeed");
+    assert_eq!(result1["timeline_count"], 1);
+
+    let content_1 = markdown_with_timeline("Timeline Test", "Initial body.", &[( &today, "First entry")]);
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("vault", "test-vault"))
+        .and(query_param("path", "timeline-test.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&content_1)))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    let result2 = reg
+        .execute(Operation::PagePut {
+            slug: "timeline-test".into(),
+            body: "Updated body.\n".into(),
+            frontmatter_updates: None,
+            timeline_append: sample_timeline("Second entry"),
+            etag: None,
+        })
+        .await
+        .expect("second put should succeed");
+    assert_eq!(result2["timeline_count"], 2);
+
+    let content_2 = markdown_with_timeline(
+        "Timeline Test",
+        "Updated body.",
+        &[( &today, "First entry"), ( &today, "Second entry")],
+    );
+    setup_note_get_mock(&server, "timeline-test", &content_2).await;
+
+    let get_result = reg
+        .execute(Operation::PageGet {
+            slug: "timeline-test".into(),
+        })
+        .await
+        .expect("get should succeed");
+
+    let timeline = get_result["timeline"].as_array().unwrap();
+    assert_eq!(timeline.len(), 2);
+    let contents: Vec<&str> = timeline
+        .iter()
+        .map(|e| e["content"].as_str().unwrap())
+        .collect();
+    assert!(contents.contains(&"First entry"));
+    assert!(contents.contains(&"Second entry"));
+}
+
+#[tokio::test]
+async fn test_frontmatter_merge() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let fm_full = serde_json::json!({
+        "title": "Original Title",
+        "page_type": "Concept",
+        "tags": ["rust", "test"],
+        "related": ["other-page"],
+        "sources": ["https://example.com"],
+        "status": "Budding"
+    });
+    setup_note_put_mock(&server, "merge-test").await;
+
+    let _result1 = reg
+        .execute(Operation::PagePut {
+            slug: "merge-test".into(),
+            body: "Original body.\n".into(),
+            frontmatter_updates: Some(fm_full),
+            timeline_append: sample_timeline("Created"),
+            etag: None,
+        })
+        .await
+        .expect("first put should succeed");
+
+    let content_original = format!(
+        "---\ntitle: Original Title\npage_type: Concept\ntags:\n  - rust\n  - test\nrelated:\n  - other-page\nsources:\n  - https://example.com\nstatus: Budding\n---\nOriginal body.\n---\n- {}: Created\n",
+        today
+    );
+    Mock::given(method("GET"))
+        .and(path("/api/note"))
+        .and(query_param("vault", "test-vault"))
+        .and(query_param("path", "merge-test.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&content_original)))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    let fm_partial = serde_json::json!({
+        "title": "Updated Title",
+        "status": "Evergreen"
+    });
+
+    let result2 = reg
+        .execute(Operation::PagePut {
+            slug: "merge-test".into(),
+            body: "Updated body.\n".into(),
+            frontmatter_updates: Some(fm_partial),
+            timeline_append: sample_timeline("Updated"),
+            etag: None,
+        })
+        .await
+        .expect("second put should succeed");
+    assert_eq!(result2["timeline_count"], 2);
+
+    let content_merged = format!(
+        "---\ntitle: Updated Title\npage_type: Concept\ntags:\n  - rust\n  - test\nrelated:\n  - other-page\nsources:\n  - https://example.com\nstatus: Evergreen\n---\nUpdated body.\n---\n- {}: Created\n- {}: Updated\n",
+        today, today
+    );
+    setup_note_get_mock(&server, "merge-test", &content_merged).await;
+
+    let get_result = reg
+        .execute(Operation::PageGet {
+            slug: "merge-test".into(),
+        })
+        .await
+        .expect("get should succeed");
+
+    let fm = get_result["frontmatter"].as_object().unwrap();
+    assert_eq!(fm["title"], "Updated Title");
+    assert_eq!(fm["status"], "Evergreen");
+    assert_eq!(fm["page_type"], "Concept");
+    let tags = fm["tags"].as_array().unwrap();
+    assert!(tags.iter().any(|t| t == "rust"));
+    assert!(tags.iter().any(|t| t == "test"));
+    let related = fm["related"].as_array().unwrap();
+    assert!(related.iter().any(|r| r == "other-page"));
+    let sources = fm["sources"].as_array().unwrap();
+    assert!(sources.iter().any(|s| s == "https://example.com"));
+}
+
+#[tokio::test]
+async fn test_page_list_with_folders() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_list_mock(&server, &["alpha.md", "beta.md", "gamma.md"]).await;
+    setup_folders_mock(&server, &["wiki", "projects", "archive"]).await;
+
+    let result = reg
+        .execute(Operation::PageList { dir: None })
+        .await
+        .expect("list should succeed");
+
+    let files = result["files"].as_array().unwrap();
+    assert_eq!(files.len(), 3);
+    assert!(files.iter().any(|f| f == "alpha.md"));
+    assert!(files.iter().any(|f| f == "beta.md"));
+    assert!(files.iter().any(|f| f == "gamma.md"));
+
+    let folders = result["folders"].as_array().unwrap();
+    assert_eq!(folders.len(), 3);
+    assert!(folders.iter().any(|f| f == "wiki"));
+    assert!(folders.iter().any(|f| f == "projects"));
+    assert!(folders.iter().any(|f| f == "archive"));
+
+    assert_eq!(result["count"], 6);
+}
+
+#[tokio::test]
+async fn test_maintain_lint_clean() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_note_put_mock(&server, "valid-page").await;
+    reg.execute(Operation::PagePut {
+        slug: "valid-page".into(),
+        body: "Valid content.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Valid Page")),
+        timeline_append: sample_timeline("Created"),
+        etag: None,
+    })
+    .await
+    .expect("put should succeed");
+
+    let result = reg
+        .execute(Operation::Maintain {
+            scope: Some("lint".into()),
+        })
+        .await
+        .expect("maintain should succeed");
+
+    assert_eq!(result["scope"], "lint");
+    assert_eq!(result["issues_count"], 0);
+    let issues = result["issues"].as_array().unwrap();
+    assert!(issues.is_empty(), "valid pages should produce no lint issues");
+}
+
+#[tokio::test]
+async fn test_maintain_backlinks_clean() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_note_put_mock(&server, "page-a").await;
+    reg.execute(Operation::PagePut {
+        slug: "page-a".into(),
+        body: "See [[page-b]] for more.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Page A")),
+        timeline_append: sample_timeline("Created"),
+        etag: None,
+    })
+    .await
+    .expect("put page-a should succeed");
+
+    setup_note_put_mock(&server, "page-b").await;
+    reg.execute(Operation::PagePut {
+        slug: "page-b".into(),
+        body: "Page B content.\n".into(),
+        frontmatter_updates: Some(sample_frontmatter("Page B")),
+        timeline_append: sample_timeline("Created"),
+        etag: None,
+    })
+    .await
+    .expect("put page-b should succeed");
+
+    let result = reg
+        .execute(Operation::Maintain {
+            scope: Some("backlinks".into()),
+        })
+        .await
+        .expect("maintain should succeed");
+
+    assert_eq!(result["scope"], "backlinks");
+    assert_eq!(result["issues_count"], 0);
+    let issues = result["issues"].as_array().unwrap();
+    assert!(
+        issues.is_empty(),
+        "valid wikilinks should produce no broken backlink issues"
+    );
+}
+
+#[tokio::test]
+async fn test_search_cjk() {
+    let server = MockServer::start().await;
+    let reg = test_registry(&server.uri()).await;
+
+    setup_note_put_mock(&server, "cjk-page").await;
+    reg.execute(Operation::PagePut {
+        slug: "cjk-page".into(),
+        body: "这是一条测试记录，用于验证中文搜索功能。\n".into(),
+        frontmatter_updates: Some(serde_json::json!({
+            "title": "中文测试页面",
+            "page_type": "Concept",
+            "tags": ["test"],
+            "related": [],
+            "sources": [],
+            "status": "Evergreen"
+        })),
+        timeline_append: sample_timeline("Created"),
+        etag: None,
+    })
+    .await
+    .expect("put should succeed");
+
+    let result = reg
+        .execute(Operation::Search {
+            query: "中文搜索".into(),
+            limit: Some(10),
+            type_filter: None,
+        })
+        .await
+        .expect("search should succeed");
+
+    assert!(result["total"].as_u64().unwrap() >= 1);
+    let results = result["results"].as_array().unwrap();
+    assert!(results.iter().any(|r| r["slug"] == "cjk-page"));
+}
+
+#[tokio::test]
+async fn test_sync_normalizes_slugs() {
+    let server = MockServer::start().await;
+    let (reg, index) = test_registry_with_index(&server.uri()).await;
+
+    setup_list_mock(&server, &["wiki/test-page.md", "folder/nested.md"]).await;
+    setup_folders_mock(&server, &[]).await;
+
+    let md1 = sample_markdown("Test Page", "Test content.");
+    setup_note_get_mock(&server, "wiki/test-page.md", &md1).await;
+
+    let md2 = sample_markdown("Nested Page", "Nested content.");
+    setup_note_get_mock(&server, "folder/nested.md", &md2).await;
+
+    let result = reg
+        .execute(Operation::Sync { dir: None })
+        .await
+        .expect("sync should succeed");
+
+    assert_eq!(result["pages_indexed"], 2);
+    assert_eq!(result["errors"].as_array().unwrap().len(), 0);
+
+    let page1 = index.get_page("wiki/test-page").await.unwrap();
+    assert!(page1.is_some(), "slug should be normalized to wiki/test-page");
+
+    let page1_md = index.get_page("wiki/test-page.md").await.unwrap();
+    assert!(page1_md.is_none(), "slug should not have .md suffix");
+
+    let page2 = index.get_page("folder/nested").await.unwrap();
+    assert!(page2.is_some(), "slug should be normalized to folder/nested");
+
+    let page2_md = index.get_page("folder/nested.md").await.unwrap();
+    assert!(page2_md.is_none(), "slug should not have .md suffix");
 }

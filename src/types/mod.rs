@@ -7,4 +7,4 @@ pub mod page;
 
 pub use error::{Error, Result};
 pub use link::{Link, LinkType};
-pub use page::{Frontmatter, Page, PageStatus, PageType, TimelineEntry};
+pub use page::{Frontmatter, Page, PageStatus, PageType, TimelineAppendInput, TimelineEntry};

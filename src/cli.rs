@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use serde_json::json;
 
 use crate::ops::{Operation, OperationRegistry};
-use crate::types::Result;
+use crate::types::{Result, TimelineAppendInput};
 
 /// Command-line interface for the stele knowledge manager.
 #[derive(Parser, Debug)]
@@ -75,12 +75,21 @@ pub enum PageCommands {
     /// Create or update a page
     Put {
         slug: String,
-        /// Content from file
+        /// Body content from file
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
-        /// Content as text
+        /// Body content as text
         #[arg(long, value_name = "TEXT")]
-        content: Option<String>,
+        body: Option<String>,
+        /// Frontmatter updates as JSON
+        #[arg(long, value_name = "JSON")]
+        frontmatter: Option<String>,
+        /// Timeline entry content (required)
+        #[arg(long, value_name = "TEXT")]
+        timeline_content: String,
+        /// Timeline entry agent name
+        #[arg(long, value_name = "AGENT")]
+        timeline_agent: Option<String>,
     },
     /// Delete a page
     Delete { slug: String },
@@ -100,24 +109,36 @@ fn command_to_operation(cmd: Commands) -> Result<Operation> {
         }
         Commands::Page { command } => match command {
             PageCommands::Get { slug } => Operation::PageGet { slug },
-            PageCommands::Put { slug, file, content } => {
-                let content_str = match (file, content) {
+            PageCommands::Put { slug, file, body, frontmatter, timeline_content, timeline_agent } => {
+                let body_str = match (file, body) {
                     (Some(path), None) => std::fs::read_to_string(&path)?,
                     (None, Some(text)) => text,
                     (Some(_), Some(_)) => {
                         return Err(crate::types::Error::Config(
-                            "cannot specify both --file and --content".into(),
+                            "cannot specify both --file and --body".into(),
                         ));
                     }
                     (None, None) => {
                         return Err(crate::types::Error::Config(
-                            "must specify either --file or --content".into(),
+                            "must specify either --file or --body".into(),
                         ));
                     }
                 };
+                let frontmatter_updates = match frontmatter {
+                    Some(json_str) => {
+                        let val: serde_json::Value = serde_json::from_str(&json_str)?;
+                        Some(val)
+                    }
+                    None => None,
+                };
                 Operation::PagePut {
                     slug,
-                    content: content_str,
+                    body: body_str,
+                    frontmatter_updates,
+                    timeline_append: TimelineAppendInput {
+                        content: timeline_content,
+                        agent: timeline_agent,
+                    },
                     etag: None,
                 }
             }
@@ -280,13 +301,20 @@ mod tests {
 
     #[test]
     fn test_cli_parses_page_put_content() {
-        let cli = SteleCli::parse_from(["stele", "page", "put", "foo", "--content", "hello"]);
+        let cli = SteleCli::parse_from([
+            "stele", "page", "put", "foo",
+            "--body", "hello",
+            "--timeline-content", "created",
+        ]);
         match cli.command {
             Commands::Page { command } => match command {
-                PageCommands::Put { slug, content, file } => {
+                PageCommands::Put { slug, body, file, frontmatter, timeline_content, timeline_agent } => {
                     assert_eq!(slug, "foo");
-                    assert_eq!(content, Some("hello".to_string()));
+                    assert_eq!(body, Some("hello".to_string()));
                     assert_eq!(file, None);
+                    assert_eq!(frontmatter, None);
+                    assert_eq!(timeline_content, "created");
+                    assert_eq!(timeline_agent, None);
                 }
                 other => panic!("expected Put, got {:?}", other),
             },
@@ -364,14 +392,20 @@ mod tests {
             command: PageCommands::Put {
                 slug: "foo".into(),
                 file: None,
-                content: Some("hello".into()),
+                body: Some("hello".into()),
+                frontmatter: None,
+                timeline_content: "created".into(),
+                timeline_agent: None,
             },
         };
         let op = command_to_operation(cmd).unwrap();
         match op {
-            Operation::PagePut { slug, content, etag } => {
+            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
                 assert_eq!(slug, "foo");
-                assert_eq!(content, "hello");
+                assert_eq!(body, "hello");
+                assert!(frontmatter_updates.is_none());
+                assert_eq!(timeline_append.content, "created");
+                assert_eq!(timeline_append.agent, None);
                 assert_eq!(etag, None);
             }
             other => panic!("expected PagePut, got {:?}", other),
@@ -384,7 +418,10 @@ mod tests {
             command: PageCommands::Put {
                 slug: "foo".into(),
                 file: Some("/tmp/test.md".into()),
-                content: Some("hello".into()),
+                body: Some("hello".into()),
+                frontmatter: None,
+                timeline_content: "created".into(),
+                timeline_agent: None,
             },
         };
         let result = command_to_operation(cmd);
@@ -399,7 +436,10 @@ mod tests {
             command: PageCommands::Put {
                 slug: "foo".into(),
                 file: None,
-                content: None,
+                body: None,
+                frontmatter: None,
+                timeline_content: "created".into(),
+                timeline_agent: None,
             },
         };
         let result = command_to_operation(cmd);

@@ -7,16 +7,21 @@ use crate::config::Config;
 use crate::fns::FnsClient;
 use crate::index::IndexEngine;
 use crate::ops::{maintain, page, search, sync};
-use crate::types::Result;
+use crate::types::{Result, TimelineAppendInput};
 
 /// A single operation that can be dispatched through the registry.
 #[derive(Debug, Clone)]
 pub enum Operation {
     PageGet { slug: String },
-    PagePut { slug: String, content: String, etag: Option<String> },
+    PagePut {
+        slug: String,
+        body: String,
+        frontmatter_updates: Option<serde_json::Value>,
+        timeline_append: TimelineAppendInput,
+        etag: Option<String>,
+    },
     PageDelete { slug: String },
     PageList { dir: Option<String> },
-    Append { slug: String, content: String },
     Search { query: String, limit: Option<i64>, type_filter: Option<String> },
     GraphQuery { slug: String, depth: Option<usize> },
     GraphBacklinks { slug: String },
@@ -74,15 +79,37 @@ impl OperationRegistry {
             },
             OperationMeta {
                 name: "page.put".into(),
-                description: "Create or update a page".into(),
+                description: "Create or update a page with structured input".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "slug": { "type": "string" },
-                        "content": { "type": "string" },
+                        "body": { "type": "string", "description": "Markdown body content (without frontmatter)" },
+                        "frontmatter": {
+                            "type": "object",
+                            "description": "Frontmatter fields to merge (required 'title' for new pages)",
+                            "properties": {
+                                "title": { "type": "string" },
+                                "page_type": { "type": "string" },
+                                "tags": { "type": "array", "items": { "type": "string" } },
+                                "related": { "type": "array", "items": { "type": "string" } },
+                                "sources": { "type": "array", "items": { "type": "string" } },
+                                "date": { "type": "string" },
+                                "status": { "type": "string" }
+                            }
+                        },
+                        "timeline": {
+                            "type": "object",
+                            "description": "Timeline entry to append (date auto-generated)",
+                            "properties": {
+                                "content": { "type": "string" },
+                                "agent": { "type": "string" }
+                            },
+                            "required": ["content"]
+                        },
                         "etag": { "type": "string" }
                     },
-                    "required": ["slug", "content"]
+                    "required": ["slug", "body", "timeline"]
                 }),
             },
             OperationMeta {
@@ -104,18 +131,6 @@ impl OperationRegistry {
                     "properties": {
                         "dir": { "type": "string" }
                     }
-                }),
-            },
-            OperationMeta {
-                name: "page.append".into(),
-                description: "Append content to an existing page".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" },
-                        "content": { "type": "string" }
-                    },
-                    "required": ["slug", "content"]
                 }),
             },
             OperationMeta {
@@ -199,17 +214,23 @@ impl OperationRegistry {
             Operation::PageGet { slug } => {
                 page::handle_page_get(&self.fns, &self.index, &slug).await
             }
-            Operation::PagePut { slug, content, etag } => {
-                page::handle_page_put(&self.fns, &self.index, &slug, &content, etag.as_deref()).await
+            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
+                page::handle_page_put(
+                    &self.fns,
+                    &self.index,
+                    &slug,
+                    &body,
+                    frontmatter_updates.as_ref(),
+                    timeline_append,
+                    etag.as_deref(),
+                )
+                .await
             }
             Operation::PageDelete { slug } => {
                 page::handle_page_delete(&self.fns, &self.index, &slug).await
             }
             Operation::PageList { dir } => {
                 page::handle_page_list(&self.fns, dir.as_deref()).await
-            }
-            Operation::Append { slug, content } => {
-                page::handle_page_append(&self.fns, &self.index, &slug, &content).await
             }
             Operation::Search { query, limit, type_filter } => {
                 search::handle_search(&self.index, &query, limit, type_filter.as_deref()).await
@@ -243,7 +264,6 @@ fn op_name(op: &Operation) -> &'static str {
         Operation::PagePut { .. } => "page.put",
         Operation::PageDelete { .. } => "page.delete",
         Operation::PageList { .. } => "page.list",
-        Operation::Append { .. } => "page.append",
         Operation::Search { .. } => "search",
         Operation::GraphQuery { .. } => "graph.query",
         Operation::GraphBacklinks { .. } => "graph.backlinks",
@@ -263,7 +283,7 @@ mod tests {
     async fn test_all_ops_have_meta() {
         let reg = test_registry().await;
         let metas = reg.list_operations();
-        assert_eq!(metas.len(), 12, "expected 12 operations, got {}", metas.len());
+        assert_eq!(metas.len(), 11, "expected 11 operations, got {}", metas.len());
 
         for meta in &metas {
             assert!(!meta.name.is_empty(), "operation name must not be empty");
@@ -305,6 +325,18 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
+            .and(path("/api/folders"))
+            .and(wiremock::matchers::query_param("vault", "test-vault"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": []
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
             .and(path("/api/note"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 1,
@@ -312,6 +344,13 @@ mod tests {
                 "message": "Success",
                 "data": { "content": sample_md, "path": "test", "fileLinks": {}, "version": 1 }
             })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/note"))
+            .and(wiremock::matchers::query_param("path", "test"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
             .mount(&server)
             .await;
 
@@ -365,11 +404,25 @@ mod tests {
         assert!(page_get.is_ok(), "PageGet failed: {:?}", page_get.err());
         let val = page_get.unwrap();
         assert!(val.get("slug").is_some());
-        assert!(val.get("content").is_some());
+        assert!(val.get("body").is_some());
+        assert!(val.get("frontmatter").is_some());
+        assert!(val.get("timeline").is_some());
 
         let page_put = reg.execute(Operation::PagePut {
             slug: "test".into(),
-            content: sample_md.to_string(),
+            body: "Content for test.\n".into(),
+            frontmatter_updates: Some(serde_json::json!({
+                "title": "Test",
+                "page_type": "Entity",
+                "tags": [],
+                "related": [],
+                "sources": [],
+                "status": "Seedling"
+            })),
+            timeline_append: TimelineAppendInput {
+                content: "Initial creation".into(),
+                agent: None,
+            },
             etag: None,
         }).await;
         assert!(page_put.is_ok(), "PagePut failed: {:?}", page_put.err());
@@ -416,15 +469,6 @@ mod tests {
         let page_del = reg.execute(Operation::PageDelete { slug: "test".into() }).await;
         assert!(page_del.is_ok(), "PageDelete failed: {:?}", page_del.err());
         assert_eq!(page_del.unwrap()["deleted"].as_bool(), Some(true));
-
-        let page_append = reg.execute(Operation::Append {
-            slug: "test".into(),
-            content: "\nAppended text.".into(),
-        }).await;
-        assert!(page_append.is_ok(), "Append failed: {:?}", page_append.err());
-        let val = page_append.unwrap();
-        assert_eq!(val["slug"].as_str(), Some("test"));
-        assert_eq!(val["appended"].as_bool(), Some(true));
     }
 
     #[tokio::test]
@@ -453,10 +497,9 @@ mod tests {
     #[test]
     fn test_op_name_helper() {
         assert_eq!(op_name(&Operation::PageGet { slug: "x".into() }), "page.get");
-        assert_eq!(op_name(&Operation::PagePut { slug: "x".into(), content: "y".into(), etag: None }), "page.put");
+        assert_eq!(op_name(&Operation::PagePut { slug: "x".into(), body: "y".into(), frontmatter_updates: None, timeline_append: TimelineAppendInput { content: "t".into(), agent: None }, etag: None }), "page.put");
         assert_eq!(op_name(&Operation::PageDelete { slug: "x".into() }), "page.delete");
         assert_eq!(op_name(&Operation::PageList { dir: None }), "page.list");
-        assert_eq!(op_name(&Operation::Append { slug: "x".into(), content: "y".into() }), "page.append");
         assert_eq!(op_name(&Operation::Search { query: "q".into(), limit: None, type_filter: None }), "search");
         assert_eq!(op_name(&Operation::GraphQuery { slug: "x".into(), depth: None }), "graph.query");
         assert_eq!(op_name(&Operation::GraphBacklinks { slug: "x".into() }), "graph.backlinks");

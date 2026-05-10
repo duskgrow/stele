@@ -46,7 +46,17 @@ async fn sync_directory(
     };
 
     for file_path in &notes {
-        fns_slugs.insert(file_path.clone());
+        match page_parser::normalize_slug(file_path) {
+            Ok(normalized) => {
+                fns_slugs.insert(normalized);
+            }
+            Err(e) => {
+                let err_msg = format!("failed to normalize slug for {}: {}", file_path, e);
+                warn!("{}", err_msg);
+                result.errors.push(err_msg);
+                continue;
+            }
+        }
 
         let content = match fns.get_note(file_path).await {
             Ok(c) => c,
@@ -58,7 +68,15 @@ async fn sync_directory(
             }
         };
 
-        let slug = file_path.clone();
+        let slug = match page_parser::normalize_slug(&file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                let err_msg = format!("failed to normalize slug for {}: {}", file_path, e);
+                warn!("{}", err_msg);
+                result.errors.push(err_msg);
+                continue;
+            }
+        };
         let page = match page_parser::parse_page(&content, &slug) {
             Ok(p) => p,
             Err(e) => {
@@ -335,9 +353,9 @@ status: Seedling
         assert_eq!(result["pages_removed"], 0);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.get_page("a.md").await.unwrap().is_some());
-        assert!(index.get_page("b.md").await.unwrap().is_some());
-        assert!(index.get_page("c.md").await.unwrap().is_some());
+        assert!(index.get_page("a").await.unwrap().is_some());
+        assert!(index.get_page("b").await.unwrap().is_some());
+        assert!(index.get_page("c").await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -347,7 +365,7 @@ status: Seedling
 
         // Pre-index with old content
         let old_content = sample_markdown("Old Title", "Old content");
-        let old_page = page_parser::parse_page(&old_content, "changed.md").unwrap();
+        let old_page = page_parser::parse_page(&old_content, "changed").unwrap();
         index.index_page(&old_page).await.unwrap();
 
         setup_list_mock(&server, &["changed.md"]).await;
@@ -366,7 +384,7 @@ status: Seedling
         assert_eq!(result["pages_indexed"], 1);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        let page = index.get_page("changed.md").await.unwrap().unwrap();
+        let page = index.get_page("changed").await.unwrap().unwrap();
         assert_eq!(page.frontmatter.title, "New Title");
     }
 
@@ -377,9 +395,9 @@ status: Seedling
 
         // Pre-index a page
         let content = sample_markdown("To Delete", "Content");
-        let page = page_parser::parse_page(&content, "to-delete.md").unwrap();
+        let page = page_parser::parse_page(&content, "to-delete").unwrap();
         index.index_page(&page).await.unwrap();
-        assert!(index.get_page("to-delete.md").await.unwrap().is_some());
+        assert!(index.get_page("to-delete").await.unwrap().is_some());
 
         // FNS returns empty list
         setup_list_mock(&server, &[]).await;
@@ -395,7 +413,7 @@ status: Seedling
         assert_eq!(result["files_changed"], 0);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.get_page("to-delete.md").await.unwrap().is_none());
+        assert!(index.get_page("to-delete").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -432,9 +450,9 @@ status: Seedling
         assert_eq!(result["errors"].as_array().unwrap().len(), 1);
         assert!(result["errors"][0].as_str().unwrap().contains("bad.md"));
 
-        assert!(index.get_page("good1.md").await.unwrap().is_some());
-        assert!(index.get_page("good2.md").await.unwrap().is_some());
-        assert!(index.get_page("bad.md").await.unwrap().is_none());
+        assert!(index.get_page("good1").await.unwrap().is_some());
+        assert!(index.get_page("good2").await.unwrap().is_some());
+        assert!(index.get_page("bad").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -461,7 +479,7 @@ status: Seedling
         assert_eq!(result["links_updated"], 1);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.has_link("source.md", "target.md").await.unwrap());
+        assert!(index.has_link("source", "target").await.unwrap());
     }
 
     #[tokio::test]
@@ -471,7 +489,7 @@ status: Seedling
 
         // Pre-index with same content
         let content = sample_markdown("Existing", "Content");
-        let page = page_parser::parse_page(&content, "existing.md").unwrap();
+        let page = page_parser::parse_page(&content, "existing").unwrap();
         index.index_page(&page).await.unwrap();
 
         setup_list_mock(&server, &["existing.md"]).await;
@@ -498,16 +516,16 @@ status: Seedling
 
         // Pre-index "unchanged" and "will-change"
         let unchanged_content = sample_markdown("Unchanged", "Same");
-        let unchanged_page = page_parser::parse_page(&unchanged_content, "unchanged.md").unwrap();
+        let unchanged_page = page_parser::parse_page(&unchanged_content, "unchanged").unwrap();
         index.index_page(&unchanged_page).await.unwrap();
 
         let old_content = sample_markdown("Old", "Old content");
-        let old_page = page_parser::parse_page(&old_content, "will-change.md").unwrap();
+        let old_page = page_parser::parse_page(&old_content, "will-change").unwrap();
         index.index_page(&old_page).await.unwrap();
 
         // Pre-index "will-delete"
         let del_content = sample_markdown("Delete", "Gone");
-        let del_page = page_parser::parse_page(&del_content, "will-delete.md").unwrap();
+        let del_page = page_parser::parse_page(&del_content, "will-delete").unwrap();
         index.index_page(&del_page).await.unwrap();
 
         // FNS has: unchanged (same), will-change (different), new-page (new)
@@ -532,10 +550,10 @@ status: Seedling
         assert_eq!(result["pages_removed"], 1);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.get_page("unchanged.md").await.unwrap().is_some());
-        assert!(index.get_page("will-change.md").await.unwrap().is_some());
-        assert!(index.get_page("new-page.md").await.unwrap().is_some());
-        assert!(index.get_page("will-delete.md").await.unwrap().is_none());
+        assert!(index.get_page("unchanged").await.unwrap().is_some());
+        assert!(index.get_page("will-change").await.unwrap().is_some());
+        assert!(index.get_page("new-page").await.unwrap().is_some());
+        assert!(index.get_page("will-delete").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -564,9 +582,9 @@ status: Seedling
         assert_eq!(result["links_updated"], 3);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.has_link("hub.md", "a.md").await.unwrap());
-        assert!(index.has_link("hub.md", "b.md").await.unwrap());
-        assert!(index.has_link("hub.md", "c.md").await.unwrap());
+        assert!(index.has_link("hub", "a").await.unwrap());
+        assert!(index.has_link("hub", "b").await.unwrap());
+        assert!(index.has_link("hub", "c").await.unwrap());
     }
 
     #[tokio::test]
@@ -596,8 +614,8 @@ status: Seedling
         assert_eq!(result["pages_indexed"], 2);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.get_page("root.md").await.unwrap().is_some());
-        assert!(index.get_page("wiki/hello.md").await.unwrap().is_some());
+        assert!(index.get_page("root").await.unwrap().is_some());
+        assert!(index.get_page("wiki/hello").await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -637,11 +655,11 @@ status: Seedling
         let index = IndexEngine::new(":memory:").await.unwrap();
 
         let content1 = sample_markdown("Old Root", "Content");
-        let page1 = page_parser::parse_page(&content1, "old-root.md").unwrap();
+        let page1 = page_parser::parse_page(&content1, "old-root").unwrap();
         index.index_page(&page1).await.unwrap();
 
         let content2 = sample_markdown("Old Wiki", "Content");
-        let page2 = page_parser::parse_page(&content2, "wiki/old.md").unwrap();
+        let page2 = page_parser::parse_page(&content2, "wiki/old").unwrap();
         index.index_page(&page2).await.unwrap();
 
         setup_list_mock_for_dir(&server, ".", &["new-root.md"]).await;
@@ -664,8 +682,8 @@ status: Seedling
         assert_eq!(result["pages_removed"], 2);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
-        assert!(index.get_page("new-root.md").await.unwrap().is_some());
-        assert!(index.get_page("old-root.md").await.unwrap().is_none());
-        assert!(index.get_page("wiki/old.md").await.unwrap().is_none());
+        assert!(index.get_page("new-root").await.unwrap().is_some());
+        assert!(index.get_page("old-root").await.unwrap().is_none());
+        assert!(index.get_page("wiki/old").await.unwrap().is_none());
     }
 }

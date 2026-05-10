@@ -1,3 +1,4 @@
+use crate::parser::page::normalize_slug;
 use crate::types::{Link, LinkType};
 
 /// Extract all wikilinks from markdown content.
@@ -143,6 +144,11 @@ fn parse_wikilink(inner: &str) -> Option<Link> {
             (LinkType::Custom(type_str.to_string()), target.to_string())
         }
         None => (LinkType::Plain, body.to_string()),
+    };
+
+    let target_slug = match normalize_slug(&target_slug) {
+        Ok(s) => s,
+        Err(_) => return None,
     };
 
     if target_slug.is_empty() {
@@ -405,5 +411,34 @@ Some `code` and [[final-link]] at the end."#;
         let links = extract_links_for_page(content, "me");
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_slug, "other");
+    }
+
+    #[test]
+    fn test_normalize_md_suffix() {
+        let links = extract_links("[[my-page.md]]");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_slug, "my-page");
+    }
+
+    #[test]
+    fn test_normalize_md_suffix_typed() {
+        let links = extract_links("[[cites::paper-2024.md]]");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_slug, "paper-2024");
+        assert_eq!(links[0].link_type, LinkType::Custom("cites".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_md_suffix_aliased() {
+        let links = extract_links("[[my-page.md|Display]]");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_slug, "my-page");
+        assert_eq!(links[0].context_snippet, Some("Display".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_md_only_is_empty() {
+        let links = extract_links("[[.md]]");
+        assert_eq!(links.len(), 0);
     }
 }

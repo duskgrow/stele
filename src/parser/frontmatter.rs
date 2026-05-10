@@ -1,5 +1,6 @@
 use crate::types::{Error, Frontmatter, PageStatus, PageType, Result};
 use serde::Deserialize;
+use serde_json::Value;
 
 impl Default for Frontmatter {
     fn default() -> Self {
@@ -94,6 +95,56 @@ pub fn parse(raw: &str) -> Result<(Frontmatter, String)> {
 pub fn serialize(frontmatter: &Frontmatter) -> Result<String> {
     let yaml = serde_yaml::to_string(frontmatter)?;
     Ok(format!("---\n{yaml}---\n"))
+}
+
+/// Merge partial frontmatter updates into an existing frontmatter.
+///
+/// Uses top-level key replacement semantics: each key in `updates` replaces
+/// the corresponding field in `existing`. Unknown keys are silently ignored.
+/// Enum fields (`page_type`, `status`) are validated; `title: null` is an error.
+pub fn merge_frontmatter(existing: &Frontmatter, updates: &Value) -> Result<Frontmatter> {
+    let obj = match updates.as_object() {
+        Some(o) => o,
+        None => return Ok(existing.clone()),
+    };
+
+    let mut result = existing.clone();
+
+    for (key, value) in obj {
+        match key.as_str() {
+            "title" => {
+                if value.is_null() {
+                    return Err(Error::Parse("title cannot be null".to_string()));
+                }
+                result.title = serde_json::from_value(value.clone())?;
+            }
+            "page_type" => {
+                result.page_type = serde_json::from_value(value.clone()).map_err(|e| {
+                    Error::Parse(format!("page_type: {e}"))
+                })?;
+            }
+            "tags" => {
+                result.tags = serde_json::from_value(value.clone())?;
+            }
+            "related" => {
+                result.related = serde_json::from_value(value.clone())?;
+            }
+            "sources" => {
+                result.sources = serde_json::from_value(value.clone())?;
+            }
+            "date" => {
+                result.date = serde_json::from_value(value.clone())?;
+            }
+            "status" => {
+                result.status = serde_json::from_value(value.clone()).map_err(|e| {
+                    Error::Parse(format!("status: {e}"))
+                })?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -267,8 +318,135 @@ mod tests {
     #[test]
     fn test_unicode_in_title_and_body() {
         let raw = "---\ntitle: \u{6d4b}\u{8bd5}\n---\n\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n";
-        let (fm, body) = parse(raw).unwrap();
+        let (fm, body) = parse(&raw).unwrap();
         assert_eq!(fm.title, "\u{6d4b}\u{8bd5}");
         assert_eq!(body, "\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n");
+    }
+
+    fn sample_frontmatter() -> Frontmatter {
+        Frontmatter {
+            title: "Original Title".to_string(),
+            page_type: PageType::Concept,
+            tags: vec!["rust".to_string(), "types".to_string()],
+            related: vec!["other-page".to_string()],
+            sources: vec!["https://example.com".to_string()],
+            date: Some("2024-01-01".to_string()),
+            status: PageStatus::Budding,
+        }
+    }
+
+    #[test]
+    fn merge_empty_updates_returns_existing() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result, existing);
+    }
+
+    #[test]
+    fn merge_title_only_rest_preserved() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"title": "New Title"});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.title, "New Title");
+        assert_eq!(result.page_type, PageType::Concept);
+        assert_eq!(result.tags, vec!["rust", "types"]);
+        assert_eq!(result.related, vec!["other-page"]);
+        assert_eq!(result.sources, vec!["https://example.com"]);
+        assert_eq!(result.date, Some("2024-01-01".to_string()));
+        assert_eq!(result.status, PageStatus::Budding);
+    }
+
+    #[test]
+    fn merge_tags_replaces_not_appends() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"tags": ["new"]});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.tags, vec!["new"]);
+        assert_eq!(result.title, "Original Title");
+        assert_eq!(result.page_type, PageType::Concept);
+    }
+
+    #[test]
+    fn merge_status_from_string() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"status": "Evergreen"});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.status, PageStatus::Evergreen);
+    }
+
+    #[test]
+    fn merge_null_title_errors() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"title": null});
+        let result = merge_frontmatter(&existing, &updates);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("title"), "error should mention title: {err}");
+    }
+
+    #[test]
+    fn merge_unknown_field_ignored() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"unknown_field": "x", "another": 42});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result, existing);
+    }
+
+    #[test]
+    fn merge_invalid_page_type_errors() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"page_type": "InvalidType"});
+        let result = merge_frontmatter(&existing, &updates);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("page_type"), "error should mention page_type: {err}");
+    }
+
+    #[test]
+    fn merge_all_fields_at_once() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({
+            "title": "All Updated",
+            "page_type": "Synthesis",
+            "tags": ["brand", "new"],
+            "related": ["rel-a", "rel-b"],
+            "sources": ["https://new.com"],
+            "date": "2025-06-01",
+            "status": "Evergreen"
+        });
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.title, "All Updated");
+        assert_eq!(result.page_type, PageType::Synthesis);
+        assert_eq!(result.tags, vec!["brand", "new"]);
+        assert_eq!(result.related, vec!["rel-a", "rel-b"]);
+        assert_eq!(result.sources, vec!["https://new.com"]);
+        assert_eq!(result.date, Some("2025-06-01".to_string()));
+        assert_eq!(result.status, PageStatus::Evergreen);
+    }
+
+    #[test]
+    fn merge_invalid_status_errors() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"status": "InvalidStatus"});
+        let result = merge_frontmatter(&existing, &updates);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("status"), "error should mention status: {err}");
+    }
+
+    #[test]
+    fn merge_mixed_known_and_unknown_fields() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({
+            "title": "Mixed",
+            "unknown_field": "ignored",
+            "status": "Seedling"
+        });
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.title, "Mixed");
+        assert_eq!(result.status, PageStatus::Seedling);
+        assert_eq!(result.page_type, PageType::Concept);
+        assert_eq!(result.tags, vec!["rust", "types"]);
     }
 }

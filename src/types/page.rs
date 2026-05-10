@@ -68,6 +68,15 @@ pub struct TimelineEntry {
     pub agent: Option<String>,
 }
 
+/// Input for appending a timeline entry via `page.put`.
+///
+/// The date is system-generated (today) and not provided by the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelineAppendInput {
+    pub content: String,
+    pub agent: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
