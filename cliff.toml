@@ -31,6 +31,8 @@ commit_parsers = [
   { message = "^style", group = "Styling" },
   { message = "^test", group = "Testing" },
   { message = "^chore\\(release\\)", skip = true },
+  { message = "update sources.nix", skip = true },
+  { message = "set tag", skip = true },
+  { message = "^ci", skip = true },
   { message = "^chore", group = "Miscellaneous Tasks" },
-  { message = "^ci", group = "CI/CD" },
 ]
