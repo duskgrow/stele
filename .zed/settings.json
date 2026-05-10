@@ -1,0 +1,10 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "binary": {
+        "path": "/share/code/stele/.zed/rust-analyzer.sh",
+        "arguments": []
+      }
+    }
+  }
+}

@@ -62,10 +62,6 @@ fn fns_string_response(data: &str) -> serde_json::Value {
     json!({"code": 1, "status": true, "message": "Success", "data": {"content": data, "path": "", "fileLinks": {}, "version": 1}})
 }
 
-fn fns_array_response(data: Vec<&str>) -> serde_json::Value {
-    json!({"code": 1, "status": true, "message": "Success", "data": data})
-}
-
 fn fns_success_response() -> serde_json::Value {
     json!({"code": 1, "status": true, "message": "Success", "data": null})
 }
@@ -260,7 +256,7 @@ async fn test_page_put_auto_indexes() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
 
-    let content = sample_markdown("Indexed Page", "Searchable content about rust.");
+    let _content = sample_markdown("Indexed Page", "Searchable content about rust.");
 
     setup_note_put_mock(&server, "indexed-page").await;
 
@@ -292,7 +288,7 @@ async fn test_page_put_extracts_wikilinks() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
 
-    let content = sample_markdown_with_link("target-page");
+    let _content = sample_markdown_with_link("target-page");
 
     setup_note_put_mock(&server, "source-page").await;
 
@@ -328,8 +324,6 @@ async fn test_page_put_extracts_wikilinks() {
 async fn test_page_delete_removes_from_index() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
-
-    let content = sample_markdown("Delete Me", "Temporary content.");
 
     setup_note_put_mock(&server, "delete-me").await;
     setup_note_delete_mock(&server, "delete-me").await;
@@ -753,7 +747,6 @@ async fn test_page_etag_conflict() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
 
-    let content = sample_markdown("Etag Page", "Content.");
 
     setup_note_put_mock(&server, "etag-page").await;
 
