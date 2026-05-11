@@ -39,6 +39,10 @@ impl OperationRegistry {
         }
     }
 
+    pub fn config(&self) -> &Config {
+        &self.context.config
+    }
+
     /// List all registered operations from inventory, sorted by name.
     pub fn list_operations(&self) -> Vec<OperationMeta> {
         let mut ops: Vec<OperationMeta> = inventory::iter::<&'static dyn OpHandler>

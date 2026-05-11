@@ -28,6 +28,7 @@ pub(crate) fn build_cli() -> Command {
             Command::new("serve")
                 .about("Start the MCP server")
                 .arg(Arg::new("transport").long("transport").default_value("stdio"))
+                .arg(Arg::new("host").long("host").default_value("127.0.0.1"))
                 .arg(Arg::new("port").long("port").value_parser(clap::value_parser!(u16)).default_value("3000"))
         )
         .subcommand(
@@ -71,13 +72,12 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
     match matches.subcommand() {
         Some(("serve", args)) => {
             let transport = args.get_one::<String>("transport").unwrap();
+            let host = args.get_one::<String>("host").unwrap();
             let port = *args.get_one::<u16>("port").unwrap();
             if transport == "stdio" {
                 crate::mcp::stdio::run_stdio(registry).await
             } else {
-                let result = json!({"status": "serving", "transport": transport, "port": port});
-                println!("{}", serde_json::to_string_pretty(&result)?);
-                Ok(())
+                crate::mcp::http::run_http(registry, host, port).await
             }
         }
         Some(("skill", skill_matches)) => {
