@@ -1,68 +1,114 @@
-# stele-lint
+---
+name: stele-lint
+version: 1.0.0
+description: |
+  Wiki health check and maintenance. Detects structural issues, orphaned pages,
+  broken links, and content quality problems.
+author: duskgrow
+tags: [stele, lint, maintenance, health-check]
+metadata:
+  hermes:
+    tags: [stele, lint, maintenance]
+---
 
-Periodic health check and maintenance skill for the Stele knowledge base.
+# Stele Lint — Health Check + Maintenance
 
-## Trigger
+Periodic health check for the wiki knowledge base.
 
-- **Automatic**: Cron-scheduled periodic health check (daily/weekly)
-- **Manual**: User requests "run lint", "health check", "maintenance check", or "stele-lint"
+## When to Use
+
+- **Manual:** User says "lint", "health check", "maintenance check"
+- **Scheduled:** Cron job (daily/weekly)
+- **After bulk ingestion:** Verify integrity after batch writes
 
 ## Workflow
 
-Run in sequence:
+### Step 1: Structure Check
 
-1. **maintain(lint)** - Detect structural and content issues
-2. **maintain(orphans)** - Find orphaned pages with no inbound links
-3. **maintain(backlinks)** - Verify and repair backlink integrity
-4. **LLM analysis** - Review findings, prioritize, suggest fixes
+```yaml
+tool: maintain
+params:
+  scope: "lint"
+```
+
+Checks:
+- Empty titles
+- Invalid slugs
+- Empty bodies
+- Source-type pages without sources
+- Pages without tags
+- Pages without timeline entries
+
+### Step 2: Orphan Detection
+
+```yaml
+tool: maintain
+params:
+  scope: "orphans"
+```
+
+Finds pages with zero inbound links. These are disconnected from the knowledge graph.
+
+### Step 3: Link Integrity
+
+```yaml
+tool: maintain
+params:
+  scope: "backlinks"
+```
+
+Verifies that all wikilinks have corresponding backlinks (Iron Law compliance).
+
+### Step 4: Full Check
+
+```yaml
+tool: maintain
+params:
+  scope: "full"
+```
+
+Runs all checks in sequence.
+
+### Step 5: LLM Analysis
+
+Review findings and:
+1. Prioritize by severity
+2. Suggest fixes for each issue
+3. Auto-fix warnings where the fix is unambiguous
+4. Queue errors for human review
 
 ## Severity Levels
 
 | Severity | Action | Examples |
 |----------|--------|----------|
-| **error** | Requires human confirmation before fix | Empty title, invalid slug |
-| **warning** | Auto-fix unless contradicted by context | Empty sources, empty tags, empty timeline, empty compiled_truth |
-
-Auto-fix warnings when the fix is unambiguous. Flag errors for review.
+| **error** | Requires human confirmation | Empty title, invalid slug, broken link target |
+| **warning** | Auto-fix unless contradicted | Empty sources on Source page, empty tags, empty timeline |
 
 ## Output Format
 
 ```
 [SEVERITY] Page: <slug> - Issue description
-  Fix suggestion: <action>
+  Fix: <suggested action>
   Context: <why this matters>
 ```
 
 Group by severity. Sort by page slug within each group.
 
-## Lint Checks
+## Auto-Fix Rules
 
-### Errors (human confirmation required)
+| Issue | Auto-Fix | Condition |
+|-------|----------|-----------|
+| Empty tags | Suggest tags from content analysis | Only if content is clear |
+| Empty sources on Source page | Flag for review | Can't auto-fix — need actual source |
+| Empty timeline | Add initial entry | Only if page has content |
+| Orphan page | Flag for review | Can't auto-delete — might be intentional |
 
-| Check | Description | Fix Suggestion |
-|-------|-------------|----------------|
-| Empty title | Page has no title field | Prompt user for title or mark for deletion |
-| Invalid slug | Slug does not match URL-safe format (`/^[a-z0-9-]+$/`) | Suggest valid slug derived from title |
+## Cron Schedule
 
-### Warnings (auto-fix eligible)
+Recommended: weekly health check
 
-| Check | Description | Fix Suggestion |
-|-------|-------------|----------------|
-| Empty sources | Source-type page has empty sources array | Remove Source designation or add sources |
-| Empty tags | Page has zero tags | Suggest tags from content analysis |
-| Empty timeline | Page has empty timeline | Remove timeline field or add events |
-| Empty compiled_truth | Page has empty compiled_truth | Flag for content review or remove field |
-
-## Execution
-
-1. Run `maintain lint` to collect all issues
-2. Run `maintain orphans` to find unlinked pages
-3. Run `maintain backlinks` to verify graph integrity
-4. Present findings in the output format above
-5. Apply auto-fixes for warnings with high confidence
-6. Queue errors for human review with suggested fixes
-
-## Dependencies
-
-- `maintain` tool with scopes: `lint`, `orphans`, `backlinks`, `full`
-- Access to page metadata: title, slug, tags, timeline, sources, compiled_truth
+```
+Schedule: 0 3 * * 0  (Sunday 3am)
+Prompt: "Run stele-lint on the wiki. Report findings and auto-fix warnings."
+Skills: [stele, stele-lint]
+```
