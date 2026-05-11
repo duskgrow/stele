@@ -86,6 +86,32 @@ async fn run_lint(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
                     message: format!("Page '{}' has invalid slug format", slug),
                 });
             }
+
+            if page.frontmatter.page_type == crate::types::PageType::Source
+                && page.frontmatter.sources.is_empty()
+            {
+                issues.push(MaintainIssue {
+                    severity: "warning".to_string(),
+                    scope: "lint".to_string(),
+                    message: format!("Page '{}' (Source) has empty sources", slug),
+                });
+            }
+
+            if page.frontmatter.tags.is_empty() {
+                issues.push(MaintainIssue {
+                    severity: "warning".to_string(),
+                    scope: "lint".to_string(),
+                    message: format!("Page '{}' has empty tags", slug),
+                });
+            }
+
+            if page.timeline.is_empty() {
+                issues.push(MaintainIssue {
+                    severity: "warning".to_string(),
+                    scope: "lint".to_string(),
+                    message: format!("Page '{}' has empty timeline", slug),
+                });
+            }
         }
     }
 
@@ -217,6 +243,85 @@ mod tests {
                 && i["message"].as_str().unwrap().contains("invalid slug format")
         });
         assert!(has_slug_issue, "invalid slug should be flagged");
+    }
+
+    #[tokio::test]
+    async fn test_maintain_lint_empty_sources_on_source_page() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let page = sample_page("source-page", "Source Page", PageType::Source, "Content");
+        index.index_page(&page).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_empty_sources = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["severity"] == "warning"
+                && i["message"].as_str().unwrap().contains("empty sources")
+        });
+        assert!(
+            has_empty_sources,
+            "expected empty sources lint issue for Source page"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maintain_lint_non_source_empty_sources_not_flagged() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let page = sample_page("concept-page", "Concept Page", PageType::Concept, "Content");
+        index.index_page(&page).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_empty_sources = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["message"].as_str().unwrap().contains("empty sources")
+        });
+        assert!(
+            !has_empty_sources,
+            "non-Source pages should not be flagged for empty sources"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maintain_lint_empty_tags() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let mut page = sample_page("tagless-page", "Tagless Page", PageType::Concept, "Content");
+        page.frontmatter.tags = vec![];
+        index.index_page(&page).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_empty_tags = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["severity"] == "warning"
+                && i["message"].as_str().unwrap().contains("empty tags")
+        });
+        assert!(has_empty_tags, "expected empty tags lint issue");
+    }
+
+    #[tokio::test]
+    async fn test_maintain_lint_empty_timeline() {
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        let mut page = sample_page("no-timeline", "No Timeline", PageType::Concept, "Content");
+        page.timeline = vec![];
+        index.index_page(&page).await.unwrap();
+
+        let result = handle_maintain(&index, Some("lint")).await.unwrap();
+        let issues = result["issues"].as_array().unwrap();
+
+        let has_empty_timeline = issues.iter().any(|i| {
+            i["scope"] == "lint"
+                && i["severity"] == "warning"
+                && i["message"].as_str().unwrap().contains("empty timeline")
+        });
+        assert!(has_empty_timeline, "expected empty timeline lint issue");
     }
 
     #[tokio::test]

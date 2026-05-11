@@ -60,7 +60,7 @@ pub fn validate_slug(slug: &str) -> Result<()> {
 /// Returns an error if stripping `.md` would produce an empty string.
 pub fn normalize_slug(slug: &str) -> Result<String> {
     match slug.strip_suffix(".md") {
-        Some(stripped) if stripped.is_empty() => Err(Error::Parse(
+        Some("") => Err(Error::Parse(
             "normalizing slug would produce an empty string".to_string(),
         )),
         Some(stripped) => Ok(stripped.to_string()),
@@ -277,12 +277,9 @@ page_type: Concept
 tags:
   - rust
   - types
-related:
-  - other-page
 sources:
   - https://example.com
 date: '2024-01-01'
-status: Budding
 ---
 This is the [[compiled-truth]] about the topic.
 
@@ -299,9 +296,7 @@ It references [[other-page]] too.
 title: No Timeline
 page_type: Entity
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Just the compiled truth.
 "
@@ -311,11 +306,9 @@ Just the compiled truth.
         "\
 ---
 title: Empty Truth
-page_type: Stub
+page_type: Entity
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 ---
 - 2024-01-01: Timeline only entry
@@ -404,11 +397,9 @@ status: Seedling
         let raw = "\
 ---
 title: Test
-page_type: Stub
+page_type: Entity
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Truth.
 ---
@@ -471,10 +462,8 @@ Truth.
         assert_eq!(page.frontmatter.title, "Test Page");
         assert_eq!(page.frontmatter.page_type, PageType::Concept);
         assert_eq!(page.frontmatter.tags, vec!["rust", "types"]);
-        assert_eq!(page.frontmatter.related, vec!["other-page"]);
         assert_eq!(page.frontmatter.sources, vec!["https://example.com"]);
         assert_eq!(page.frontmatter.date, Some("2024-01-01".to_string()));
-        assert_eq!(page.frontmatter.status, crate::types::PageStatus::Budding);
     }
 
     #[test]
@@ -609,9 +598,7 @@ Truth.
 title: Test
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Content above the hr.
 
@@ -644,9 +631,7 @@ More content below the hr.
 title: Fenced
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Some content.
 
@@ -681,9 +666,7 @@ Real separator here.
 title: Tilde Fence
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Content.
 
@@ -714,9 +697,7 @@ After fence.
 title: No Sep
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Just some content without any separator.
 ";
@@ -736,9 +717,7 @@ Just some content without any separator.
 title: Empty Timeline
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Some truth.
 ";
@@ -759,9 +738,7 @@ Some truth.
 title: RT Empty
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Some truth.
 ";
@@ -782,9 +759,7 @@ Some truth.
 title: Fence No Sep
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 ```rust
 fn main() {}
@@ -803,9 +778,7 @@ fn main() {}
 title: Unclosed
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 Before fence.
 
@@ -829,9 +802,7 @@ Before fence.
 title: Agent Test
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 ---
 - 2026-05-09 [claude]: update
@@ -852,9 +823,7 @@ status: Seedling
 title: URL Test
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 ---
 - 2024-06-15 [https://source.com]: entry
@@ -897,9 +866,7 @@ status: Seedling
 title: Roundtrip
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 ---
 - 2026-05-09 [claude]: update

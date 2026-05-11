@@ -298,7 +298,7 @@ mod tests {
     async fn test_page_get_structured_output() {
         let (fns, index, server) = setup_fns_and_index().await;
         let slug = "structured-page";
-        let md = "---\ntitle: Structured Test\npage_type: Concept\ntags:\n  - rust\n  - test\nrelated:\n  - other-page\nsources:\n  - https://example.com\nstatus: Evergreen\n---\nThis is the compiled truth.\n---\n- 2024-01-01 [agent-a]: First entry\n- 2024-06-15 [https://source.com]: Second entry\n";
+        let md = "---\ntitle: Structured Test\npage_type: Concept\ntags:\n  - rust\n  - test\nsources:\n  - https://example.com\n---\nThis is the compiled truth.\n---\n- 2024-01-01 [agent-a]: First entry\n- 2024-06-15 [https://source.com]: Second entry\n";
 
         Mock::given(method("GET"))
             .and(path("/api/note"))
@@ -348,7 +348,7 @@ mod tests {
     async fn test_page_get_empty_timeline() {
         let (fns, index, server) = setup_fns_and_index().await;
         let slug = "no-timeline-page";
-        let md = "---\ntitle: No Timeline\npage_type: Stub\ntags: []\nrelated: []\nsources: []\nstatus: Seedling\n---\nJust the body.\n";
+        let md = "---\ntitle: No Timeline\npage_type: Entity\ntags: []\nsources: []\n---\nJust the body.\n";
 
         Mock::given(method("GET"))
             .and(path("/api/note"))
@@ -494,7 +494,7 @@ mod tests {
 
         assert_eq!(result["links_count"].as_u64().unwrap(), 2);
 
-        let outgoing = graph::get_outlinks(index.pool(), slug).await.expect("get_outlinks should succeed");
+        let outgoing = graph::get_outlinks(index.pool(), slug, None).await.expect("get_outlinks should succeed");
         assert_eq!(outgoing.len(), 2);
 
         let target_slugs: Vec<&str> = outgoing.iter().map(|l| l.target_slug.as_str()).collect();
@@ -926,7 +926,7 @@ mod tests {
     async fn test_page_put_update_existing_merges_frontmatter() {
         let (fns, index, server) = setup_fns_and_index().await;
         let slug = "existing-page";
-        let existing_content = "---\ntitle: Old Title\npage_type: Concept\ntags:\n  - rust\nrelated: []\nsources: []\nstatus: Budding\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
+        let existing_content = "---\ntitle: Old Title\npage_type: Concept\ntags:\n  - rust\nsources: []\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
 
         Mock::given(method("GET"))
             .and(path("/api/note"))
@@ -952,7 +952,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let updates = serde_json::json!({"title": "New Title", "status": "Evergreen"});
+        let updates = serde_json::json!({"title": "New Title", "visibility": "private"});
         let timeline = TimelineAppendInput {
             content: "Updated the title".into(),
             agent: Some("claude".into()),
@@ -979,7 +979,7 @@ mod tests {
     async fn test_page_put_update_existing_no_frontmatter_merges_empty() {
         let (fns, index, server) = setup_fns_and_index().await;
         let slug = "existing-page";
-        let existing_content = "---\ntitle: Keep Title\npage_type: Concept\ntags:\n  - rust\nrelated: []\nsources: []\nstatus: Budding\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
+        let existing_content = "---\ntitle: Keep Title\npage_type: Concept\ntags:\n  - rust\nsources: []\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
 
         Mock::given(method("GET"))
             .and(path("/api/note"))

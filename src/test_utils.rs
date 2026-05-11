@@ -10,7 +10,7 @@ use crate::index::IndexEngine;
 #[cfg(test)]
 use crate::ops::registry::OperationRegistry;
 #[cfg(test)]
-use crate::types::{Frontmatter, Page, PageStatus, PageType, TimelineEntry};
+use crate::types::{Frontmatter, Page, PageType, TimelineEntry};
 
 #[cfg(test)]
 pub fn sample_page(slug: &str, title: &str, page_type: PageType, content: &str) -> Page {
@@ -20,10 +20,10 @@ pub fn sample_page(slug: &str, title: &str, page_type: PageType, content: &str) 
             title: title.to_string(),
             page_type,
             tags: vec!["test".to_string()],
-            related: vec![],
             sources: vec![],
             date: None,
-            status: PageStatus::Budding,
+            visibility: "shared".to_string(),
+            created_by: None,
         },
         compiled_truth: content.to_string(),
         timeline: vec![TimelineEntry {

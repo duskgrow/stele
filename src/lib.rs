@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod ops;
 pub mod parser;
 pub mod search;
+pub mod skills;
 pub mod types;
 
 #[cfg(test)]

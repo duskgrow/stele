@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rmcp::{
     ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData, JsonObject,
+        CallToolRequestParams, CallToolResult, Content, ErrorData, JsonObject,
         ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo,
         Tool,
     },
@@ -16,8 +16,7 @@ use rmcp::{
 /// MCP stdio transport.
 pub mod stdio;
 
-use crate::ops::{Operation, OperationRegistry};
-use crate::types::TimelineAppendInput;
+use crate::ops::OperationRegistry;
 
 /// The MCP server implementation exposing stele operations as tools.
 #[derive(Clone)]
@@ -37,116 +36,6 @@ impl SteleMcpServer {
             _ => Arc::new(JsonObject::default()),
         };
         Tool::new(meta.name.clone(), meta.description.clone(), schema)
-    }
-
-    fn parse_operation(
-        name: &str,
-        args: Option<JsonObject>,
-    ) -> std::result::Result<Operation, ErrorData> {
-        let args = args.unwrap_or_default();
-
-        let get_string = |key: &str| -> std::result::Result<String, ErrorData> {
-            args.get(key)
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .ok_or_else(|| {
-                    ErrorData::invalid_params(
-                        format!("missing required field: {}", key),
-                        None,
-                    )
-                })
-        };
-
-        let get_opt_string = |key: &str| -> Option<String> {
-            args.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
-        };
-
-        let get_opt_i64 = |key: &str| -> Option<i64> {
-            args.get(key).and_then(|v| v.as_i64())
-        };
-
-        let get_opt_usize = |key: &str| -> Option<usize> {
-            args.get(key).and_then(|v| v.as_u64()).map(|n| n as usize)
-        };
-
-        let get_opt_value = |key: &str| -> Option<serde_json::Value> {
-            args.get(key).cloned()
-        };
-
-        match name {
-            "page.get" => Ok(Operation::PageGet {
-                slug: get_string("slug")?,
-            }),
-            "page.put" => {
-                let slug = get_string("slug")?;
-                let body = get_string("body")?;
-                let frontmatter_updates = get_opt_value("frontmatter");
-                let etag = get_opt_string("etag");
-
-                let timeline_obj = args.get("timeline").ok_or_else(|| {
-                    ErrorData::invalid_params(
-                        "missing required field: timeline".to_string(),
-                        None,
-                    )
-                })?;
-                let timeline_content = timeline_obj
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| {
-                        ErrorData::invalid_params(
-                            "missing required field: timeline.content".to_string(),
-                            None,
-                        )
-                    })?;
-                let timeline_agent = timeline_obj
-                    .get("agent")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                Ok(Operation::PagePut {
-                    slug,
-                    body,
-                    frontmatter_updates,
-                    timeline_append: TimelineAppendInput {
-                        content: timeline_content,
-                        agent: timeline_agent,
-                    },
-                    etag,
-                })
-            }
-            "page.delete" => Ok(Operation::PageDelete {
-                slug: get_string("slug")?,
-            }),
-            "page.list" => Ok(Operation::PageList {
-                dir: get_opt_string("dir"),
-            }),
-            "search" => Ok(Operation::Search {
-                query: get_string("query")?,
-                limit: get_opt_i64("limit"),
-                type_filter: get_opt_string("type_filter"),
-            }),
-            "graph.query" => Ok(Operation::GraphQuery {
-                slug: get_string("slug")?,
-                depth: get_opt_usize("depth"),
-            }),
-            "graph.backlinks" => Ok(Operation::GraphBacklinks {
-                slug: get_string("slug")?,
-            }),
-            "sync" => Ok(Operation::Sync {
-                dir: get_opt_string("dir"),
-            }),
-            "maintain" => Ok(Operation::Maintain {
-                scope: get_opt_string("scope"),
-            }),
-            "stats" => Ok(Operation::Stats),
-            "reindex" => Ok(Operation::Reindex),
-            _ => Err(ErrorData::new(
-                ErrorCode::INVALID_PARAMS,
-                format!("unknown tool: {}", name),
-                None,
-            )),
-        }
     }
 }
 
@@ -178,8 +67,7 @@ impl ServerHandler for SteleMcpServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResult, ErrorData> {
-        let op = Self::parse_operation(&request.name, request.arguments)?;
-        let result = self.registry.execute(op).await;
+        let result = self.registry.execute_mcp(&request.name, request.arguments).await;
         match result {
             Ok(value) => Ok(CallToolResult::structured(value)),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
@@ -231,9 +119,7 @@ mod tests {
     #[tokio::test]
     async fn test_tools_call_dispatch() {
         let registry = Arc::new(test_registry().await);
-
-        let op = SteleMcpServer::parse_operation("stats", None).unwrap();
-        let result = registry.execute(op).await.unwrap();
+        let result = registry.execute_mcp("stats", None).await.unwrap();
 
         assert!(result.get("total_pages").is_some());
         assert!(result.get("total_links").is_some());
@@ -253,194 +139,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_unknown_tool() {
-        let result = SteleMcpServer::parse_operation("unknown.tool", None);
+        let registry = Arc::new(test_registry().await);
+        let result = registry.execute_mcp("unknown.tool", None).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_parse_operation_page_put() {
-        let args = rmcp::object!({
-            "slug": "test-page",
-            "body": "# Hello",
-            "timeline": { "content": "Created page" }
-        });
-        let op = SteleMcpServer::parse_operation("page.put", Some(args)).unwrap();
-        match op {
-            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
-                assert_eq!(slug, "test-page");
-                assert_eq!(body, "# Hello");
-                assert!(frontmatter_updates.is_none());
-                assert_eq!(timeline_append.content, "Created page");
-                assert_eq!(timeline_append.agent, None);
-                assert_eq!(etag, None);
-            }
-            other => panic!("expected PagePut, got {:?}", other),
-        }
-    }
+    async fn test_call_tool_dispatches_via_registry() {
+        let registry = Arc::new(test_registry().await);
 
-    #[tokio::test]
-    async fn test_parse_operation_page_put_full() {
-        let args = rmcp::object!({
-            "slug": "test-page",
-            "body": "Body content",
-            "frontmatter": { "title": "Test", "status": "Budding" },
-            "timeline": { "content": "Updated", "agent": "claude" },
-            "etag": "abc123"
-        });
-        let op = SteleMcpServer::parse_operation("page.put", Some(args)).unwrap();
-        match op {
-            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
-                assert_eq!(slug, "test-page");
-                assert_eq!(body, "Body content");
-                assert!(frontmatter_updates.is_some());
-                let fm = frontmatter_updates.unwrap();
-                assert_eq!(fm["title"].as_str().unwrap(), "Test");
-                assert_eq!(timeline_append.content, "Updated");
-                assert_eq!(timeline_append.agent, Some("claude".to_string()));
-                assert_eq!(etag, Some("abc123".to_string()));
-            }
-            other => panic!("expected PagePut, got {:?}", other),
-        }
-    }
+        let result = registry.execute_mcp("stats", None).await;
+        assert!(result.is_ok(), "stats dispatch failed: {:?}", result.err());
+        let value = result.unwrap();
+        assert!(value.get("total_pages").is_some());
 
-    #[tokio::test]
-    async fn test_parse_operation_page_put_missing_timeline() {
-        let args = rmcp::object!({
-            "slug": "test-page",
-            "body": "# Hello"
-        });
-        let result = SteleMcpServer::parse_operation("page.put", Some(args));
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("missing required field: timeline"));
-    }
+        let result = registry.execute_mcp("reindex", None).await;
+        assert!(result.is_ok(), "reindex dispatch failed: {:?}", result.err());
+        assert_eq!(result.unwrap()["reindexed"].as_bool(), Some(true));
 
-    #[tokio::test]
-    async fn test_parse_operation_page_put_missing_timeline_content() {
-        let args = rmcp::object!({
-            "slug": "test-page",
-            "body": "# Hello",
-            "timeline": { "agent": "claude" }
-        });
-        let result = SteleMcpServer::parse_operation("page.put", Some(args));
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("timeline.content"));
+        let result = registry.execute_mcp("unknown.tool", None).await;
+        assert!(result.is_err(), "unknown tool should fail");
     }
-
-    #[tokio::test]
-    async fn test_parse_operation_page_delete() {
-        let args = rmcp::object!({"slug": "test-page"});
-        let op = SteleMcpServer::parse_operation("page.delete", Some(args)).unwrap();
-        match op {
-            Operation::PageDelete { slug } => assert_eq!(slug, "test-page"),
-            other => panic!("expected PageDelete, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_page_list() {
-        let args = rmcp::object!({"dir": "notes"});
-        let op = SteleMcpServer::parse_operation("page.list", Some(args)).unwrap();
-        match op {
-            Operation::PageList { dir } => assert_eq!(dir, Some("notes".into())),
-            other => panic!("expected PageList, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_search() {
-        let args = rmcp::object!({
-            "query": "rust",
-            "limit": 10,
-            "type_filter": "note"
-        });
-        let op = SteleMcpServer::parse_operation("search", Some(args)).unwrap();
-        match op {
-            Operation::Search {
-                query,
-                limit,
-                type_filter,
-            } => {
-                assert_eq!(query, "rust");
-                assert_eq!(limit, Some(10));
-                assert_eq!(type_filter, Some("note".into()));
-            }
-            other => panic!("expected Search, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_graph_query() {
-        let args = rmcp::object!({
-            "slug": "foo",
-            "depth": 2
-        });
-        let op = SteleMcpServer::parse_operation("graph.query", Some(args)).unwrap();
-        match op {
-            Operation::GraphQuery { slug, depth } => {
-                assert_eq!(slug, "foo");
-                assert_eq!(depth, Some(2));
-            }
-            other => panic!("expected GraphQuery, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_graph_backlinks() {
-        let args = rmcp::object!({"slug": "foo"});
-        let op = SteleMcpServer::parse_operation("graph.backlinks", Some(args)).unwrap();
-        match op {
-            Operation::GraphBacklinks { slug } => assert_eq!(slug, "foo"),
-            other => panic!("expected GraphBacklinks, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_sync() {
-        let args = rmcp::object!({"dir": "notes"});
-        let op = SteleMcpServer::parse_operation("sync", Some(args)).unwrap();
-        match op {
-            Operation::Sync { dir } => assert_eq!(dir, Some("notes".into())),
-            other => panic!("expected Sync, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_maintain() {
-        let args = rmcp::object!({"scope": "lint"});
-        let op = SteleMcpServer::parse_operation("maintain", Some(args)).unwrap();
-        match op {
-            Operation::Maintain { scope } => assert_eq!(scope, Some("lint".into())),
-            other => panic!("expected Maintain, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_stats() {
-        let op = SteleMcpServer::parse_operation("stats", None).unwrap();
-        match op {
-            Operation::Stats => {}
-            other => panic!("expected Stats, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_reindex() {
-        let op = SteleMcpServer::parse_operation("reindex", None).unwrap();
-        match op {
-            Operation::Reindex => {}
-            other => panic!("expected Reindex, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_parse_operation_missing_required_field() {
-        let args = rmcp::object!({});
-        let result = SteleMcpServer::parse_operation("page.get", Some(args));
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("missing required field: slug"));
-    }
-
 }
