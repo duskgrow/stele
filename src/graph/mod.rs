@@ -2,28 +2,48 @@ use crate::types::{Error, Link, LinkType, Result};
 use sqlx::SqlitePool;
 use std::collections::{HashSet, VecDeque};
 
-/// Get all outgoing links from a page.
-pub async fn get_outlinks(db: &SqlitePool, slug: &str) -> Result<Vec<Link>> {
-    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1",
-    )
-    .bind(slug)
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?;
+/// Get all outgoing links from a page, optionally filtered by link type.
+pub async fn get_outlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+    let rows: Vec<(String, String, String, Option<String>)> = match link_type {
+        Some(lt) => sqlx::query_as(
+            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1 AND link_type = ?2",
+        )
+        .bind(slug)
+        .bind(lt)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?,
+        None => sqlx::query_as(
+            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1",
+        )
+        .bind(slug)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?,
+    };
 
     Ok(rows.into_iter().map(parse_link_row).collect())
 }
 
-/// Get all incoming links to a page.
-pub async fn get_backlinks(db: &SqlitePool, slug: &str) -> Result<Vec<Link>> {
-    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1",
-    )
-    .bind(slug)
-    .fetch_all(db)
-    .await
-    .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?;
+/// Get all incoming links to a page, optionally filtered by link type.
+pub async fn get_backlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+    let rows: Vec<(String, String, String, Option<String>)> = match link_type {
+        Some(lt) => sqlx::query_as(
+            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1 AND link_type = ?2",
+        )
+        .bind(slug)
+        .bind(lt)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?,
+        None => sqlx::query_as(
+            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1",
+        )
+        .bind(slug)
+        .fetch_all(db)
+        .await
+        .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?,
+    };
 
     Ok(rows.into_iter().map(parse_link_row).collect())
 }
@@ -31,11 +51,22 @@ pub async fn get_backlinks(db: &SqlitePool, slug: &str) -> Result<Vec<Link>> {
 /// BFS traversal from a starting page, returning (slug, distance) pairs.
 /// The start slug itself is not included in results.
 /// Cycle detection prevents infinite loops.
+///
+/// `direction` controls which edges to follow:
+/// - `"out"` (default): follow outgoing links
+/// - `"in"`: follow incoming links
+/// - `"both"`: follow both directions
+///
+/// `link_type` filters to only edges of the given type.
 pub async fn get_neighbors(
     db: &SqlitePool,
     slug: &str,
     depth: usize,
+    link_type: Option<&str>,
+    direction: Option<&str>,
 ) -> Result<Vec<(String, usize)>> {
+    let dir = direction.unwrap_or("out");
+
     let mut visited: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<(String, usize)> = VecDeque::new();
     let mut results: Vec<(String, usize)> = Vec::new();
@@ -52,11 +83,40 @@ pub async fn get_neighbors(
             continue;
         }
 
-        let outlinks = get_outlinks(db, &current).await?;
-        for link in outlinks {
-            if !visited.contains(&link.target_slug) {
-                visited.insert(link.target_slug.clone());
-                queue.push_back((link.target_slug, current_depth + 1));
+        match dir {
+            "in" => {
+                let links = get_backlinks(db, &current, link_type).await?;
+                for link in links {
+                    if !visited.contains(&link.source_slug) {
+                        visited.insert(link.source_slug.clone());
+                        queue.push_back((link.source_slug, current_depth + 1));
+                    }
+                }
+            }
+            "both" => {
+                let outlinks = get_outlinks(db, &current, link_type).await?;
+                for link in outlinks {
+                    if !visited.contains(&link.target_slug) {
+                        visited.insert(link.target_slug.clone());
+                        queue.push_back((link.target_slug, current_depth + 1));
+                    }
+                }
+                let backlinks = get_backlinks(db, &current, link_type).await?;
+                for link in backlinks {
+                    if !visited.contains(&link.source_slug) {
+                        visited.insert(link.source_slug.clone());
+                        queue.push_back((link.source_slug, current_depth + 1));
+                    }
+                }
+            }
+            _ => {
+                let links = get_outlinks(db, &current, link_type).await?;
+                for link in links {
+                    if !visited.contains(&link.target_slug) {
+                        visited.insert(link.target_slug.clone());
+                        queue.push_back((link.target_slug, current_depth + 1));
+                    }
+                }
             }
         }
     }
@@ -198,7 +258,7 @@ mod tests {
         insert_link(&pool, "page-a", "page-b", "plain").await;
         insert_link(&pool, "page-a", "page-c", "cites").await;
 
-        let outlinks = get_outlinks(&pool, "page-a").await.unwrap();
+        let outlinks = get_outlinks(&pool, "page-a", None).await.unwrap();
         assert_eq!(outlinks.len(), 2);
         assert!(outlinks.iter().any(|l| l.target_slug == "page-b"
             && l.link_type == LinkType::Plain));
@@ -215,7 +275,7 @@ mod tests {
         insert_link(&pool, "page-a", "page-b", "plain").await;
         insert_link(&pool, "page-c", "page-b", "references").await;
 
-        let backlinks = get_backlinks(&pool, "page-b").await.unwrap();
+        let backlinks = get_backlinks(&pool, "page-b", None).await.unwrap();
         assert_eq!(backlinks.len(), 2);
         assert!(backlinks.iter().any(|l| l.source_slug == "page-a"
             && l.link_type == LinkType::Plain));
@@ -233,7 +293,7 @@ mod tests {
         insert_link(&pool, "b", "c", "plain").await;
         insert_link(&pool, "c", "a", "plain").await;
 
-        let neighbors = get_neighbors(&pool, "a", 5).await.unwrap();
+        let neighbors = get_neighbors(&pool, "a", 5, None, None).await.unwrap();
         assert_eq!(neighbors.len(), 2);
         let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
         assert!(slugs.contains(&"b".to_string()));
@@ -249,7 +309,7 @@ mod tests {
         insert_link(&pool, "a", "b", "plain").await;
         insert_link(&pool, "b", "c", "plain").await;
 
-        let neighbors = get_neighbors(&pool, "a", 1).await.unwrap();
+        let neighbors = get_neighbors(&pool, "a", 1, None, None).await.unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].0, "b");
         assert_eq!(neighbors[0].1, 1);
@@ -305,13 +365,13 @@ mod tests {
     async fn test_empty_graph() {
         let pool = setup_test_db().await;
 
-        let outlinks = get_outlinks(&pool, "nonexistent").await.unwrap();
+        let outlinks = get_outlinks(&pool, "nonexistent", None).await.unwrap();
         assert!(outlinks.is_empty());
 
-        let backlinks = get_backlinks(&pool, "nonexistent").await.unwrap();
+        let backlinks = get_backlinks(&pool, "nonexistent", None).await.unwrap();
         assert!(backlinks.is_empty());
 
-        let neighbors = get_neighbors(&pool, "nonexistent", 3).await.unwrap();
+        let neighbors = get_neighbors(&pool, "nonexistent", 3, None, None).await.unwrap();
         assert!(neighbors.is_empty());
 
         let orphans = find_orphans(&pool).await.unwrap();
@@ -329,7 +389,112 @@ mod tests {
         let pool = setup_test_db().await;
         insert_page(&pool, "page-a").await;
 
-        let outlinks = get_outlinks(&pool, "page-a").await.unwrap();
+        let outlinks = get_outlinks(&pool, "page-a", None).await.unwrap();
         assert!(outlinks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_outlinks_link_type_filter() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_page(&pool, "page-c").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+        insert_link(&pool, "page-a", "page-c", "cites").await;
+
+        let plain = get_outlinks(&pool, "page-a", Some("plain")).await.unwrap();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].target_slug, "page-b");
+
+        let cites = get_outlinks(&pool, "page-a", Some("cites")).await.unwrap();
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].target_slug, "page-c");
+
+        let none = get_outlinks(&pool, "page-a", Some("missing")).await.unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_backlinks_link_type_filter() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "page-a").await;
+        insert_page(&pool, "page-b").await;
+        insert_page(&pool, "page-c").await;
+        insert_link(&pool, "page-a", "page-b", "plain").await;
+        insert_link(&pool, "page-c", "page-b", "references").await;
+
+        let plain = get_backlinks(&pool, "page-b", Some("plain")).await.unwrap();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].source_slug, "page-a");
+
+        let refs = get_backlinks(&pool, "page-b", Some("references")).await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].source_slug, "page-c");
+    }
+
+    #[tokio::test]
+    async fn test_neighbors_direction_in() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "b", "a", "plain").await;
+        insert_link(&pool, "c", "a", "plain").await;
+
+        let neighbors = get_neighbors(&pool, "a", 1, None, Some("in")).await.unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
+        assert!(slugs.contains(&"b".to_string()));
+        assert!(slugs.contains(&"c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_neighbors_direction_both() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "a", "b", "plain").await;
+        insert_link(&pool, "c", "a", "plain").await;
+
+        let neighbors = get_neighbors(&pool, "a", 1, None, Some("both")).await.unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
+        assert!(slugs.contains(&"b".to_string()));
+        assert!(slugs.contains(&"c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_neighbors_link_type_filter() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "a", "b", "plain").await;
+        insert_link(&pool, "a", "c", "cites").await;
+
+        let plain = get_neighbors(&pool, "a", 1, Some("plain"), None).await.unwrap();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].0, "b");
+
+        let cites = get_neighbors(&pool, "a", 1, Some("cites"), None).await.unwrap();
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].0, "c");
+    }
+
+    #[tokio::test]
+    async fn test_neighbors_direction_in_depth_two() {
+        let pool = setup_test_db().await;
+        insert_page(&pool, "a").await;
+        insert_page(&pool, "b").await;
+        insert_page(&pool, "c").await;
+        insert_link(&pool, "b", "a", "plain").await;
+        insert_link(&pool, "c", "b", "plain").await;
+
+        let neighbors = get_neighbors(&pool, "a", 2, None, Some("in")).await.unwrap();
+        assert_eq!(neighbors.len(), 2);
+        let by_dist: std::collections::HashMap<String, usize> = neighbors.into_iter().collect();
+        assert_eq!(by_dist.get("b"), Some(&1));
+        assert_eq!(by_dist.get("c"), Some(&2));
     }
 }

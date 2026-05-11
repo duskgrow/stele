@@ -1,35 +1,13 @@
 use std::fmt;
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::Value;
 
 use crate::config::Config;
 use crate::fns::FnsClient;
 use crate::index::IndexEngine;
-use crate::ops::{maintain, page, search, sync};
-use crate::types::{Result, TimelineAppendInput};
-
-/// A single operation that can be dispatched through the registry.
-#[derive(Debug, Clone)]
-pub enum Operation {
-    PageGet { slug: String },
-    PagePut {
-        slug: String,
-        body: String,
-        frontmatter_updates: Option<serde_json::Value>,
-        timeline_append: TimelineAppendInput,
-        etag: Option<String>,
-    },
-    PageDelete { slug: String },
-    PageList { dir: Option<String> },
-    Search { query: String, limit: Option<i64>, type_filter: Option<String> },
-    GraphQuery { slug: String, depth: Option<usize> },
-    GraphBacklinks { slug: String },
-    Sync { dir: Option<String> },
-    Maintain { scope: Option<String> },
-    Stats,
-    Reindex,
-}
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
+use crate::types::Result;
 
 /// Metadata describing an operation for tool listings and MCP schemas.
 #[derive(Debug, Clone)]
@@ -39,12 +17,9 @@ pub struct OperationMeta {
     pub input_schema: serde_json::Value,
 }
 
-/// Central registry that holds FNS, index, and config references,
-/// and dispatches operations to their handlers.
+/// Central registry that holds context and dispatches operations via inventory.
 pub struct OperationRegistry {
-    fns: Arc<FnsClient>,
-    index: Arc<IndexEngine>,
-    config: Config,
+    context: OperationContext,
 }
 
 impl fmt::Debug for OperationRegistry {
@@ -52,225 +27,66 @@ impl fmt::Debug for OperationRegistry {
         f.debug_struct("OperationRegistry")
             .field("fns", &"<FnsClient>")
             .field("index", &"<IndexEngine>")
-            .field("config", &self.config)
+            .field("config", &self.context.config)
             .finish()
     }
 }
 
 impl OperationRegistry {
-    /// Create a new registry with the given dependencies.
     pub fn new(fns: Arc<FnsClient>, index: Arc<IndexEngine>, config: Config) -> Self {
-        Self { fns, index, config }
-    }
-
-    /// List all supported operations with their metadata and JSON schemas.
-    pub fn list_operations(&self) -> Vec<OperationMeta> {
-        vec![
-            OperationMeta {
-                name: "page.get".into(),
-                description: "Retrieve a page by slug".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" }
-                    },
-                    "required": ["slug"]
-                }),
-            },
-            OperationMeta {
-                name: "page.put".into(),
-                description: "Create or update a page with structured input".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" },
-                        "body": { "type": "string", "description": "Markdown body content (without frontmatter)" },
-                        "frontmatter": {
-                            "type": "object",
-                            "description": "Frontmatter fields to merge (required 'title' for new pages)",
-                            "properties": {
-                                "title": { "type": "string" },
-                                "page_type": { "type": "string" },
-                                "tags": { "type": "array", "items": { "type": "string" } },
-                                "related": { "type": "array", "items": { "type": "string" } },
-                                "sources": { "type": "array", "items": { "type": "string" } },
-                                "date": { "type": "string" },
-                                "status": { "type": "string" }
-                            }
-                        },
-                        "timeline": {
-                            "type": "object",
-                            "description": "Timeline entry to append (date auto-generated)",
-                            "properties": {
-                                "content": { "type": "string" },
-                                "agent": { "type": "string" }
-                            },
-                            "required": ["content"]
-                        },
-                        "etag": { "type": "string" }
-                    },
-                    "required": ["slug", "body", "timeline"]
-                }),
-            },
-            OperationMeta {
-                name: "page.delete".into(),
-                description: "Delete a page by slug".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" }
-                    },
-                    "required": ["slug"]
-                }),
-            },
-            OperationMeta {
-                name: "page.list".into(),
-                description: "List pages, optionally filtered by directory".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "dir": { "type": "string" }
-                    }
-                }),
-            },
-            OperationMeta {
-                name: "search".into(),
-                description: "Full-text search across pages".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string" },
-                        "limit": { "type": "integer" },
-                        "type_filter": { "type": "string" }
-                    },
-                    "required": ["query"]
-                }),
-            },
-            OperationMeta {
-                name: "graph.query".into(),
-                description: "Query the page graph to a given depth".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" },
-                        "depth": { "type": "integer" }
-                    },
-                    "required": ["slug"]
-                }),
-            },
-            OperationMeta {
-                name: "graph.backlinks".into(),
-                description: "Find all pages that link to a given slug".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "slug": { "type": "string" }
-                    },
-                    "required": ["slug"]
-                }),
-            },
-            OperationMeta {
-                name: "sync".into(),
-                description: "Synchronize pages from FNS vault".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "dir": { "type": "string" }
-                    }
-                }),
-            },
-            OperationMeta {
-                name: "maintain".into(),
-                description: "Run maintenance tasks (lint, orphans, backlinks, full)".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "scope": {
-                            "type": "string",
-                            "enum": ["lint", "orphans", "backlinks", "full"]
-                        }
-                    }
-                }),
-            },
-            OperationMeta {
-                name: "stats".into(),
-                description: "Get index statistics".into(),
-                input_schema: json!({
-                    "type": "object"
-                }),
-            },
-            OperationMeta {
-                name: "reindex".into(),
-                description: "Rebuild the full-text search index".into(),
-                input_schema: json!({
-                    "type": "object"
-                }),
-            },
-        ]
-    }
-
-    pub async fn execute(&self, op: Operation) -> Result<serde_json::Value> {
-        match op {
-            Operation::PageGet { slug } => {
-                page::handle_page_get(&self.fns, &self.index, &slug).await
-            }
-            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
-                page::handle_page_put(
-                    &self.fns,
-                    &self.index,
-                    &slug,
-                    &body,
-                    frontmatter_updates.as_ref(),
-                    timeline_append,
-                    etag.as_deref(),
-                )
-                .await
-            }
-            Operation::PageDelete { slug } => {
-                page::handle_page_delete(&self.fns, &self.index, &slug).await
-            }
-            Operation::PageList { dir } => {
-                page::handle_page_list(&self.fns, dir.as_deref()).await
-            }
-            Operation::Search { query, limit, type_filter } => {
-                search::handle_search(&self.index, &query, limit, type_filter.as_deref()).await
-            }
-            Operation::GraphQuery { slug, depth } => {
-                search::handle_graph_query(&self.index, &slug, depth).await
-            }
-            Operation::GraphBacklinks { slug } => {
-                search::handle_graph_backlinks(&self.index, &slug).await
-            }
-            Operation::Sync { dir } => {
-                sync::handle_sync(&self.fns, &self.index, dir.as_deref()).await
-            }
-            Operation::Maintain { scope } => {
-                maintain::handle_maintain(&self.index, scope.as_deref()).await
-            }
-            Operation::Stats => {
-                search::handle_stats(&self.index).await
-            }
-            Operation::Reindex => {
-                maintain::handle_reindex(&self.fns, &self.index).await
-            }
+        Self {
+            context: OperationContext { fns, index, config },
         }
     }
-}
 
-#[allow(dead_code)]
-fn op_name(op: &Operation) -> &'static str {
-    match op {
-        Operation::PageGet { .. } => "page.get",
-        Operation::PagePut { .. } => "page.put",
-        Operation::PageDelete { .. } => "page.delete",
-        Operation::PageList { .. } => "page.list",
-        Operation::Search { .. } => "search",
-        Operation::GraphQuery { .. } => "graph.query",
-        Operation::GraphBacklinks { .. } => "graph.backlinks",
-        Operation::Sync { .. } => "sync",
-        Operation::Maintain { .. } => "maintain",
-        Operation::Stats => "stats",
-        Operation::Reindex => "reindex",
+    /// List all registered operations from inventory, sorted by name.
+    pub fn list_operations(&self) -> Vec<OperationMeta> {
+        let mut ops: Vec<OperationMeta> = inventory::iter::<&'static dyn OpHandler>
+            .into_iter()
+            .map(|h| OperationMeta {
+                name: h.name().to_string(),
+                description: h.description().to_string(),
+                input_schema: h.input_schema(),
+            })
+            .collect();
+        ops.sort_by_key(|m| m.name.clone());
+        ops
+    }
+
+    fn find_handler(&self, name: &str) -> Option<&'static dyn OpHandler> {
+        inventory::iter::<&'static dyn OpHandler>
+            .into_iter()
+            .find(|h| h.name() == name)
+            .copied()
+    }
+
+    /// Execute an operation by name with MCP JSON arguments.
+    pub async fn execute_mcp(
+        &self,
+        name: &str,
+        args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Value> {
+        let handler = self
+            .find_handler(name)
+            .ok_or_else(|| crate::types::Error::Config(format!("unknown tool: {}", name)))?;
+        let op = handler
+            .from_mcp_args(args)
+            .map_err(|e| crate::types::Error::Config(e.to_string()))?;
+        op.execute(&self.context)
+            .await
+            .map_err(|e| crate::types::Error::Config(e.to_string()))
+    }
+
+    /// Execute an operation from an already-constructed OpExec.
+    pub async fn execute_op(&self, op: Box<dyn OpExec>) -> Result<Value> {
+        op.execute(&self.context)
+            .await
+            .map_err(|e| crate::types::Error::Config(e.to_string()))
+    }
+
+    /// Get the operation context (for CLI use).
+    pub fn context(&self) -> &OperationContext {
+        &self.context
     }
 }
 
@@ -307,7 +123,7 @@ mod tests {
 
         let server = MockServer::start().await;
 
-        let sample_md = "---\ntitle: Test\npage_type: Entity\ntags: []\nrelated: []\nsources: []\nstatus: Seedling\n---\nContent for test.\n";
+        let sample_md = "---\ntitle: Test\npage_type: Entity\ntags: []\nsources: []\n---\nContent for test.\n";
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -400,74 +216,68 @@ mod tests {
         };
         let reg = OperationRegistry::new(fns, index, config);
 
-        let page_get = reg.execute(Operation::PageGet { slug: "test".into() }).await;
-        assert!(page_get.is_ok(), "PageGet failed: {:?}", page_get.err());
+        let args = serde_json::json!({"slug": "test"});
+        let page_get = reg.execute_mcp("page.get", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(page_get.is_ok(), "page.get failed: {:?}", page_get.err());
         let val = page_get.unwrap();
         assert!(val.get("slug").is_some());
         assert!(val.get("body").is_some());
         assert!(val.get("frontmatter").is_some());
         assert!(val.get("timeline").is_some());
 
-        let page_put = reg.execute(Operation::PagePut {
-            slug: "test".into(),
-            body: "Content for test.\n".into(),
-            frontmatter_updates: Some(serde_json::json!({
+        let args = serde_json::json!({
+            "slug": "test",
+            "body": "Content for test.\n",
+            "frontmatter": {
                 "title": "Test",
                 "page_type": "Entity",
                 "tags": [],
                 "related": [],
                 "sources": [],
                 "status": "Seedling"
-            })),
-            timeline_append: TimelineAppendInput {
-                content: "Initial creation".into(),
-                agent: None,
             },
-            etag: None,
-        }).await;
-        assert!(page_put.is_ok(), "PagePut failed: {:?}", page_put.err());
+            "timeline": { "content": "Initial creation" }
+        });
+        let page_put = reg.execute_mcp("page.put", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(page_put.is_ok(), "page.put failed: {:?}", page_put.err());
         assert!(page_put.unwrap().get("indexed").is_some());
 
-        let page_list = reg.execute(Operation::PageList { dir: None }).await;
-        assert!(page_list.is_ok(), "PageList failed: {:?}", page_list.err());
+        let page_list = reg.execute_mcp("page.list", None).await;
+        assert!(page_list.is_ok(), "page.list failed: {:?}", page_list.err());
         assert!(page_list.unwrap().get("files").is_some());
 
-        let search = reg.execute(Operation::Search {
-            query: "Content".into(),
-            limit: Some(10),
-            type_filter: None,
-        }).await;
-        assert!(search.is_ok(), "Search failed: {:?}", search.err());
+        let args = serde_json::json!({"query": "Content", "limit": 10});
+        let search = reg.execute_mcp("search", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(search.is_ok(), "search failed: {:?}", search.err());
         assert!(search.unwrap().get("results").is_some());
 
-        let graph_q = reg.execute(Operation::GraphQuery {
-            slug: "test".into(),
-            depth: Some(1),
-        }).await;
-        assert!(graph_q.is_ok(), "GraphQuery failed: {:?}", graph_q.err());
+        let args = serde_json::json!({"slug": "test", "depth": 1});
+        let graph_q = reg.execute_mcp("graph.query", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(graph_q.is_ok(), "graph.query failed: {:?}", graph_q.err());
 
-        let graph_bl = reg.execute(Operation::GraphBacklinks {
-            slug: "test".into(),
-        }).await;
-        assert!(graph_bl.is_ok(), "GraphBacklinks failed: {:?}", graph_bl.err());
+        let args = serde_json::json!({"slug": "test"});
+        let graph_bl = reg.execute_mcp("graph.backlinks", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(graph_bl.is_ok(), "graph.backlinks failed: {:?}", graph_bl.err());
 
-        let sync = reg.execute(Operation::Sync { dir: None }).await;
-        assert!(sync.is_ok(), "Sync failed: {:?}", sync.err());
+        let sync = reg.execute_mcp("sync", None).await;
+        assert!(sync.is_ok(), "sync failed: {:?}", sync.err());
 
-        let maintain = reg.execute(Operation::Maintain { scope: Some("full".into()) }).await;
-        assert!(maintain.is_ok(), "Maintain failed: {:?}", maintain.err());
+        let args = serde_json::json!({"scope": "full"});
+        let maintain = reg.execute_mcp("maintain", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(maintain.is_ok(), "maintain failed: {:?}", maintain.err());
         assert!(maintain.unwrap().get("issues_count").is_some());
 
-        let stats = reg.execute(Operation::Stats).await;
-        assert!(stats.is_ok(), "Stats failed: {:?}", stats.err());
+        let stats = reg.execute_mcp("stats", None).await;
+        assert!(stats.is_ok(), "stats failed: {:?}", stats.err());
         assert!(stats.unwrap().get("total_pages").is_some());
 
-        let reindex = reg.execute(Operation::Reindex).await;
-        assert!(reindex.is_ok(), "Reindex failed: {:?}", reindex.err());
+        let reindex = reg.execute_mcp("reindex", None).await;
+        assert!(reindex.is_ok(), "reindex failed: {:?}", reindex.err());
         assert_eq!(reindex.unwrap()["reindexed"].as_bool(), Some(true));
 
-        let page_del = reg.execute(Operation::PageDelete { slug: "test".into() }).await;
-        assert!(page_del.is_ok(), "PageDelete failed: {:?}", page_del.err());
+        let args = serde_json::json!({"slug": "test"});
+        let page_del = reg.execute_mcp("page.delete", Some(serde_json::from_value(args).unwrap())).await;
+        assert!(page_del.is_ok(), "page.delete failed: {:?}", page_del.err());
         assert_eq!(page_del.unwrap()["deleted"].as_bool(), Some(true));
     }
 
@@ -492,20 +302,5 @@ mod tests {
             let _: serde_json::Value = serde_json::from_str(&serialized)
                 .unwrap_or_else(|e| panic!("schema for '{}' failed to round-trip: {}", meta.name, e));
         }
-    }
-
-    #[test]
-    fn test_op_name_helper() {
-        assert_eq!(op_name(&Operation::PageGet { slug: "x".into() }), "page.get");
-        assert_eq!(op_name(&Operation::PagePut { slug: "x".into(), body: "y".into(), frontmatter_updates: None, timeline_append: TimelineAppendInput { content: "t".into(), agent: None }, etag: None }), "page.put");
-        assert_eq!(op_name(&Operation::PageDelete { slug: "x".into() }), "page.delete");
-        assert_eq!(op_name(&Operation::PageList { dir: None }), "page.list");
-        assert_eq!(op_name(&Operation::Search { query: "q".into(), limit: None, type_filter: None }), "search");
-        assert_eq!(op_name(&Operation::GraphQuery { slug: "x".into(), depth: None }), "graph.query");
-        assert_eq!(op_name(&Operation::GraphBacklinks { slug: "x".into() }), "graph.backlinks");
-        assert_eq!(op_name(&Operation::Sync { dir: None }), "sync");
-        assert_eq!(op_name(&Operation::Maintain { scope: None }), "maintain");
-        assert_eq!(op_name(&Operation::Stats), "stats");
-        assert_eq!(op_name(&Operation::Reindex), "reindex");
     }
 }

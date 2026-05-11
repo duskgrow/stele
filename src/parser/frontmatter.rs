@@ -1,4 +1,4 @@
-use crate::types::{Error, Frontmatter, PageStatus, PageType, Result};
+use crate::types::{Error, Frontmatter, PageType, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -6,22 +6,18 @@ impl Default for Frontmatter {
     fn default() -> Self {
         Frontmatter {
             title: String::new(),
-            page_type: PageType::Stub,
+            page_type: PageType::Entity,
             tags: Vec::new(),
-            related: Vec::new(),
             sources: Vec::new(),
             date: None,
-            status: PageStatus::Seedling,
+            visibility: "shared".to_string(),
+            created_by: None,
         }
     }
 }
 
 fn default_page_type() -> PageType {
-    PageType::Stub
-}
-
-fn default_page_status() -> PageStatus {
-    PageStatus::Seedling
+    PageType::Entity
 }
 
 #[derive(Deserialize)]
@@ -33,13 +29,17 @@ struct FrontmatterHelper {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
-    related: Vec<String>,
-    #[serde(default)]
     sources: Vec<String>,
     #[serde(default)]
     date: Option<String>,
-    #[serde(default = "default_page_status")]
-    status: PageStatus,
+    #[serde(default = "default_shared")]
+    visibility: String,
+    #[serde(default)]
+    created_by: Option<String>,
+}
+
+fn default_shared() -> String {
+    "shared".to_string()
 }
 
 impl From<FrontmatterHelper> for Frontmatter {
@@ -48,10 +48,10 @@ impl From<FrontmatterHelper> for Frontmatter {
             title: h.title,
             page_type: h.page_type,
             tags: h.tags,
-            related: h.related,
             sources: h.sources,
             date: h.date,
-            status: h.status,
+            visibility: h.visibility,
+            created_by: h.created_by,
         }
     }
 }
@@ -101,7 +101,7 @@ pub fn serialize(frontmatter: &Frontmatter) -> Result<String> {
 ///
 /// Uses top-level key replacement semantics: each key in `updates` replaces
 /// the corresponding field in `existing`. Unknown keys are silently ignored.
-/// Enum fields (`page_type`, `status`) are validated; `title: null` is an error.
+/// Enum fields (`page_type`) are validated; `title: null` is an error.
 pub fn merge_frontmatter(existing: &Frontmatter, updates: &Value) -> Result<Frontmatter> {
     let obj = match updates.as_object() {
         Some(o) => o,
@@ -126,19 +126,17 @@ pub fn merge_frontmatter(existing: &Frontmatter, updates: &Value) -> Result<Fron
             "tags" => {
                 result.tags = serde_json::from_value(value.clone())?;
             }
-            "related" => {
-                result.related = serde_json::from_value(value.clone())?;
-            }
             "sources" => {
                 result.sources = serde_json::from_value(value.clone())?;
             }
             "date" => {
                 result.date = serde_json::from_value(value.clone())?;
             }
-            "status" => {
-                result.status = serde_json::from_value(value.clone()).map_err(|e| {
-                    Error::Parse(format!("status: {e}"))
-                })?;
+            "visibility" => {
+                result.visibility = serde_json::from_value(value.clone())?;
+            }
+            "created_by" => {
+                result.created_by = serde_json::from_value(value.clone())?;
             }
             _ => {}
         }
@@ -153,17 +151,17 @@ mod tests {
 
     #[test]
     fn test_parse_valid() {
-        let raw = "---\ntitle: Test Page\npage_type: Concept\ntags:\n  - rust\n  - types\nrelated:\n  - other-page\nsources:\n  - https://example.com\ndate: '2024-01-01'\nstatus: Budding\n---\n# Body starts here\n\nSome content.\n";
+        let raw = "---\ntitle: Test Page\npage_type: Concept\ntags:\n  - rust\n  - types\nsources:\n  - https://example.com\ndate: '2024-01-01'\nvisibility: private\ncreated_by: alice\n---\n# Body starts here\n\nSome content.\n";
 
         let (fm, body) = parse(raw).unwrap();
 
         assert_eq!(fm.title, "Test Page");
         assert_eq!(fm.page_type, PageType::Concept);
         assert_eq!(fm.tags, vec!["rust", "types"]);
-        assert_eq!(fm.related, vec!["other-page"]);
         assert_eq!(fm.sources, vec!["https://example.com"]);
         assert_eq!(fm.date, Some("2024-01-01".to_string()));
-        assert_eq!(fm.status, PageStatus::Budding);
+        assert_eq!(fm.visibility, "private");
+        assert_eq!(fm.created_by, Some("alice".to_string()));
         assert_eq!(body, "# Body starts here\n\nSome content.\n");
     }
 
@@ -174,12 +172,12 @@ mod tests {
         let (fm, body) = parse(raw).unwrap();
 
         assert_eq!(fm.title, "Minimal Page");
-        assert_eq!(fm.page_type, PageType::Stub);
+        assert_eq!(fm.page_type, PageType::Entity);
         assert!(fm.tags.is_empty());
-        assert!(fm.related.is_empty());
         assert!(fm.sources.is_empty());
         assert_eq!(fm.date, None);
-        assert_eq!(fm.status, PageStatus::Seedling);
+        assert_eq!(fm.visibility, "shared");
+        assert_eq!(fm.created_by, None);
         assert_eq!(body, "Just the body.\n");
     }
 
@@ -210,28 +208,29 @@ mod tests {
         let (fm, body) = parse(raw).unwrap();
 
         assert_eq!(fm.title, "");
-        assert_eq!(fm.page_type, PageType::Stub);
+        assert_eq!(fm.page_type, PageType::Entity);
         assert!(fm.tags.is_empty());
         assert_eq!(fm.date, None);
-        assert_eq!(fm.status, PageStatus::Seedling);
+        assert_eq!(fm.visibility, "shared");
+        assert_eq!(fm.created_by, None);
         assert_eq!(body, "Body after empty frontmatter.\n");
     }
 
     #[test]
     fn test_parse_unknown_fields() {
-        let raw = "---\ntitle: With Extras\npage_type: Entity\nunknown_field: 42\nanother_one:\n  nested: true\nstatus: Evergreen\n---\nBody here.\n";
+        let raw = "---\ntitle: With Extras\npage_type: Entity\nunknown_field: 42\nanother_one:\n  nested: true\nvisibility: public\n---\nBody here.\n";
 
         let (fm, body) = parse(raw).unwrap();
 
         assert_eq!(fm.title, "With Extras");
         assert_eq!(fm.page_type, PageType::Entity);
-        assert_eq!(fm.status, PageStatus::Evergreen);
+        assert_eq!(fm.visibility, "public");
         assert_eq!(body, "Body here.\n");
     }
 
     #[test]
     fn test_roundtrip() {
-        let raw = "---\ntitle: Roundtrip Test\npage_type: Synthesis\ntags:\n  - foo\nrelated:\n  - bar\nsources:\n  - baz\ndate: '2024-06-01'\nstatus: Evergreen\n---\n# Body\n";
+        let raw = "---\ntitle: Roundtrip Test\npage_type: Synthesis\ntags:\n  - foo\nsources:\n  - baz\ndate: '2024-06-01'\nvisibility: private\ncreated_by: bob\n---\n# Body\n";
 
         let (fm1, _) = parse(raw).unwrap();
         let serialized = serialize(&fm1).unwrap();
@@ -247,10 +246,10 @@ mod tests {
             title: "Serialize Me".to_string(),
             page_type: PageType::Query,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
-            related: vec!["rel1".to_string()],
             sources: vec![],
             date: Some("2024-12-25".to_string()),
-            status: PageStatus::Budding,
+            visibility: "shared".to_string(),
+            created_by: None,
         };
 
         let result = serialize(&fm).unwrap();
@@ -259,7 +258,7 @@ mod tests {
         assert!(result.ends_with("---\n"));
         assert!(result.contains("title: Serialize Me"));
         assert!(result.contains("page_type: Query"));
-        assert!(result.contains("status: Budding"));
+        assert!(result.contains("visibility: shared"));
     }
 
     #[test]
@@ -302,13 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_related_defaults_to_empty_vec() {
-        let raw = "---\ntitle: Test\nrelated: []\n---\nBody\n";
-        let (fm, _) = parse(raw).unwrap();
-        assert!(fm.related.is_empty());
-    }
-
-    #[test]
     fn test_empty_sources_defaults_to_empty_vec() {
         let raw = "---\ntitle: Test\nsources: []\n---\nBody\n";
         let (fm, _) = parse(raw).unwrap();
@@ -328,10 +320,10 @@ mod tests {
             title: "Original Title".to_string(),
             page_type: PageType::Concept,
             tags: vec!["rust".to_string(), "types".to_string()],
-            related: vec!["other-page".to_string()],
             sources: vec!["https://example.com".to_string()],
             date: Some("2024-01-01".to_string()),
-            status: PageStatus::Budding,
+            visibility: "shared".to_string(),
+            created_by: None,
         }
     }
 
@@ -351,10 +343,10 @@ mod tests {
         assert_eq!(result.title, "New Title");
         assert_eq!(result.page_type, PageType::Concept);
         assert_eq!(result.tags, vec!["rust", "types"]);
-        assert_eq!(result.related, vec!["other-page"]);
         assert_eq!(result.sources, vec!["https://example.com"]);
         assert_eq!(result.date, Some("2024-01-01".to_string()));
-        assert_eq!(result.status, PageStatus::Budding);
+        assert_eq!(result.visibility, "shared");
+        assert_eq!(result.created_by, None);
     }
 
     #[test]
@@ -368,11 +360,19 @@ mod tests {
     }
 
     #[test]
-    fn merge_status_from_string() {
+    fn merge_visibility_from_string() {
         let existing = sample_frontmatter();
-        let updates = serde_json::json!({"status": "Evergreen"});
+        let updates = serde_json::json!({"visibility": "private"});
         let result = merge_frontmatter(&existing, &updates).unwrap();
-        assert_eq!(result.status, PageStatus::Evergreen);
+        assert_eq!(result.visibility, "private");
+    }
+
+    #[test]
+    fn merge_created_by_from_string() {
+        let existing = sample_frontmatter();
+        let updates = serde_json::json!({"created_by": "alice"});
+        let result = merge_frontmatter(&existing, &updates).unwrap();
+        assert_eq!(result.created_by, Some("alice".to_string()));
     }
 
     #[test]
@@ -410,29 +410,19 @@ mod tests {
             "title": "All Updated",
             "page_type": "Synthesis",
             "tags": ["brand", "new"],
-            "related": ["rel-a", "rel-b"],
             "sources": ["https://new.com"],
             "date": "2025-06-01",
-            "status": "Evergreen"
+            "visibility": "private",
+            "created_by": "bob"
         });
         let result = merge_frontmatter(&existing, &updates).unwrap();
         assert_eq!(result.title, "All Updated");
         assert_eq!(result.page_type, PageType::Synthesis);
         assert_eq!(result.tags, vec!["brand", "new"]);
-        assert_eq!(result.related, vec!["rel-a", "rel-b"]);
         assert_eq!(result.sources, vec!["https://new.com"]);
         assert_eq!(result.date, Some("2025-06-01".to_string()));
-        assert_eq!(result.status, PageStatus::Evergreen);
-    }
-
-    #[test]
-    fn merge_invalid_status_errors() {
-        let existing = sample_frontmatter();
-        let updates = serde_json::json!({"status": "InvalidStatus"});
-        let result = merge_frontmatter(&existing, &updates);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("status"), "error should mention status: {err}");
+        assert_eq!(result.visibility, "private");
+        assert_eq!(result.created_by, Some("bob".to_string()));
     }
 
     #[test]
@@ -441,12 +431,48 @@ mod tests {
         let updates = serde_json::json!({
             "title": "Mixed",
             "unknown_field": "ignored",
-            "status": "Seedling"
+            "visibility": "public"
         });
         let result = merge_frontmatter(&existing, &updates).unwrap();
         assert_eq!(result.title, "Mixed");
-        assert_eq!(result.status, PageStatus::Seedling);
+        assert_eq!(result.visibility, "public");
         assert_eq!(result.page_type, PageType::Concept);
         assert_eq!(result.tags, vec!["rust", "types"]);
+    }
+
+    #[test]
+    fn stub_page_type_maps_to_entity() {
+        let raw = "---\ntitle: Old Stub\npage_type: Stub\n---\nBody.\n";
+        let (fm, body) = parse(raw).unwrap();
+        assert_eq!(fm.title, "Old Stub");
+        assert_eq!(fm.page_type, PageType::Entity);
+        assert_eq!(body, "Body.\n");
+    }
+
+    #[test]
+    fn old_status_field_silently_ignored_yaml() {
+        let raw = "---\ntitle: With Status\npage_type: Entity\nstatus: Seedling\n---\nBody.\n";
+        let (fm, body) = parse(raw).unwrap();
+        assert_eq!(fm.title, "With Status");
+        assert_eq!(fm.page_type, PageType::Entity);
+        assert_eq!(body, "Body.\n");
+    }
+
+    #[test]
+    fn old_related_field_silently_ignored_yaml() {
+        let raw = "---\ntitle: With Related\npage_type: Entity\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
+        let (fm, body) = parse(raw).unwrap();
+        assert_eq!(fm.title, "With Related");
+        assert_eq!(fm.page_type, PageType::Entity);
+        assert_eq!(body, "Body.\n");
+    }
+
+    #[test]
+    fn all_old_fields_combined_ignored_yaml() {
+        let raw = "---\ntitle: All Old\npage_type: Stub\nstatus: Seedling\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
+        let (fm, body) = parse(raw).unwrap();
+        assert_eq!(fm.title, "All Old");
+        assert_eq!(fm.page_type, PageType::Entity);
+        assert_eq!(body, "Body.\n");
     }
 }

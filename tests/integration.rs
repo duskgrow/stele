@@ -7,8 +7,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use stele::config::{Config, FnsConfig, IndexConfig, ServerConfig};
 use stele::fns::FnsClient;
 use stele::index::IndexEngine;
-use stele::ops::{Operation, OperationRegistry};
-use stele::types::TimelineAppendInput;
+use stele::ops::OperationRegistry;
 
 fn test_config(fns_url: &str) -> Config {
     Config {
@@ -46,7 +45,7 @@ async fn test_registry(fns_url: &str) -> OperationRegistry {
 
 fn sample_markdown(title: &str, body: &str) -> String {
     format!(
-        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\n{}\n",
+        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nsources: []\n---\n{}\n",
         title, body
     )
 }
@@ -88,17 +87,10 @@ fn sample_frontmatter(title: &str) -> serde_json::Value {
         "title": title,
         "page_type": "Entity",
         "tags": ["test"],
-        "related": [],
+        
         "sources": [],
-        "status": "Evergreen"
+        "visibility": "shared"
     })
-}
-
-fn sample_timeline(content: &str) -> TimelineAppendInput {
-    TimelineAppendInput {
-        content: content.into(),
-        agent: None,
-    }
 }
 
 async fn setup_note_put_mock(server: &MockServer, _slug: &str) {
@@ -182,7 +174,7 @@ fn markdown_with_timeline(title: &str, body: &str, entries: &[(&str, &str)]) -> 
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\n{}\n---\n{}\n",
+        "---\ntitle: {}\npage_type: Entity\ntags:\n  - test\nsources: []\n---\n{}\n---\n{}\n",
         title, body, timeline
     )
 }
@@ -226,22 +218,14 @@ async fn test_page_put_then_get_roundtrip() {
     setup_note_get_mock(&server, "test-page", &content).await;
 
     let put_result = reg
-        .execute(Operation::PagePut {
-            slug: "test-page".into(),
-            body: "Compiled truth content.\n".into(),
-            frontmatter_updates: Some(sample_frontmatter("Test Page")),
-            timeline_append: sample_timeline("Created"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "test-page", "body": "Compiled truth content.\n", "frontmatter": sample_frontmatter("Test Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
         .await
         .expect("put should succeed");
     assert_eq!(put_result["slug"], "test-page");
     assert_eq!(put_result["indexed"], true);
 
     let get_result = reg
-        .execute(Operation::PageGet {
-            slug: "test-page".into(),
-        })
+        .execute_mcp("page.get", Some(json!({"slug": "test-page"}).as_object().cloned().unwrap()))
         .await
         .expect("get should succeed");
     assert_eq!(get_result["slug"], "test-page");
@@ -260,22 +244,12 @@ async fn test_page_put_auto_indexes() {
 
     setup_note_put_mock(&server, "indexed-page").await;
 
-    reg.execute(Operation::PagePut {
-        slug: "indexed-page".into(),
-        body: "Searchable content about rust.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Indexed Page")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "indexed-page", "body": "Searchable content about rust.\n", "frontmatter": sample_frontmatter("Indexed Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put should succeed");
 
     let search_result = reg
-        .execute(Operation::Search {
-            query: "rust".into(),
-            limit: Some(10),
-            type_filter: None,
-        })
+        .execute_mcp("search", Some(json!({"query": "rust", "limit": 10}).as_object().cloned().unwrap()))
         .await
         .expect("search should succeed");
     assert!(search_result["total"].as_u64().unwrap() >= 1);
@@ -293,21 +267,13 @@ async fn test_page_put_extracts_wikilinks() {
     setup_note_put_mock(&server, "source-page").await;
 
     let put_result = reg
-        .execute(Operation::PagePut {
-            slug: "source-page".into(),
-            body: "This references [[target-page]].\n".into(),
-            frontmatter_updates: Some(sample_frontmatter("Link Page")),
-            timeline_append: sample_timeline("Created"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "source-page", "body": "This references [[target-page]].\n", "frontmatter": sample_frontmatter("Link Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
         .await
         .expect("put should succeed");
     assert!(put_result["links_count"].as_u64().unwrap() >= 1);
 
     let backlinks = reg
-        .execute(Operation::GraphBacklinks {
-            slug: "target-page".into(),
-        })
+        .execute_mcp("graph.backlinks", Some(json!({"slug": "target-page"}).as_object().cloned().unwrap()))
         .await
         .expect("backlinks should succeed");
     assert!(backlinks["count"].as_u64().unwrap() >= 1);
@@ -328,28 +294,20 @@ async fn test_page_delete_removes_from_index() {
     setup_note_put_mock(&server, "delete-me").await;
     setup_note_delete_mock(&server, "delete-me").await;
 
-    reg.execute(Operation::PagePut {
-        slug: "delete-me".into(),
-        body: "Temporary content.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Delete Me")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "delete-me", "body": "Temporary content.\n", "frontmatter": sample_frontmatter("Delete Me"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put should succeed");
 
-    let stats_before = reg.execute(Operation::Stats).await.unwrap();
+    let stats_before = reg.execute_mcp("stats", None).await.unwrap();
     assert!(stats_before["total_pages"].as_i64().unwrap() >= 1);
 
     let del_result = reg
-        .execute(Operation::PageDelete {
-            slug: "delete-me".into(),
-        })
+        .execute_mcp("page.delete", Some(json!({"slug": "delete-me"}).as_object().cloned().unwrap()))
         .await
         .expect("delete should succeed");
     assert_eq!(del_result["deleted"], true);
 
-    let stats_after = reg.execute(Operation::Stats).await.unwrap();
+    let stats_after = reg.execute_mcp("stats", None).await.unwrap();
     assert_eq!(stats_after["total_pages"].as_i64().unwrap(), 0);
 }
 
@@ -362,7 +320,7 @@ async fn test_page_list_returns_files() {
     setup_folders_mock(&server, &[]).await;
 
     let result = reg
-        .execute(Operation::PageList { dir: None })
+        .execute_mcp("page.list", None)
         .await
         .expect("list should succeed");
 
@@ -393,11 +351,7 @@ async fn test_search_finds_indexed_page() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute(Operation::Search {
-            query: "quantum".into(),
-            limit: Some(10),
-            type_filter: None,
-        })
+        .execute_mcp("search", Some(json!({"query": "quantum", "limit": 10}).as_object().cloned().unwrap()))
         .await
         .expect("search should succeed");
 
@@ -412,11 +366,11 @@ async fn test_search_type_filter() {
     let server = MockServer::start().await;
     let index = test_index().await;
 
-    let md_entity = "---\ntitle: Rust Language\npage_type: Entity\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nRust is a systems language.\n";
+    let md_entity = "---\ntitle: Rust Language\npage_type: Entity\ntags: []\nsources: []\n---\nRust is a systems language.\n";
     let page_e = stele::parser::page::parse_page(md_entity, "rust-lang").unwrap();
     index.index_page(&page_e).await.unwrap();
 
-    let md_concept = "---\ntitle: Ownership Concept\npage_type: Concept\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nOwnership is a Rust concept.\n";
+    let md_concept = "---\ntitle: Ownership Concept\npage_type: Concept\ntags: []\nsources: []\n---\nOwnership is a Rust concept.\n";
     let page_c = stele::parser::page::parse_page(md_concept, "ownership").unwrap();
     index.index_page(&page_c).await.unwrap();
 
@@ -429,11 +383,7 @@ async fn test_search_type_filter() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute(Operation::Search {
-            query: "rust".into(),
-            limit: Some(10),
-            type_filter: Some("Entity".into()),
-        })
+        .execute_mcp("search", Some(json!({"query": "rust", "limit": 10, "type_filter": "Entity"}).as_object().cloned().unwrap()))
         .await
         .expect("search should succeed");
 
@@ -467,10 +417,7 @@ async fn test_graph_query_returns_outlinks() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute(Operation::GraphQuery {
-            slug: "page-a".into(),
-            depth: Some(1),
-        })
+        .execute_mcp("graph.query", Some(json!({"slug": "page-a", "depth": 1}).as_object().cloned().unwrap()))
         .await
         .expect("graph query should succeed");
 
@@ -493,7 +440,7 @@ async fn test_graph_backlinks() {
     let page_a = stele::parser::page::parse_page(&md_a, "page-a").unwrap();
     index.index_page(&page_a).await.unwrap();
 
-    let md_b = "---\ntitle: Page B\npage_type: Entity\ntags: []\nrelated: []\nsources: []\nstatus: Evergreen\n---\nAlso links to [[target]].\n";
+    let md_b = "---\ntitle: Page B\npage_type: Entity\ntags: []\nsources: []\n---\nAlso links to [[target]].\n";
     let page_b = stele::parser::page::parse_page(md_b, "page-b").unwrap();
     index.index_page(&page_b).await.unwrap();
 
@@ -515,9 +462,7 @@ async fn test_graph_backlinks() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute(Operation::GraphBacklinks {
-            slug: "target".into(),
-        })
+        .execute_mcp("graph.backlinks", Some(json!({"slug": "target"}).as_object().cloned().unwrap()))
         .await
         .expect("backlinks should succeed");
 
@@ -547,7 +492,7 @@ async fn test_sync_indexes_from_fns() {
     setup_note_get_mock(&server, "beta.md", &md_beta).await;
 
     let result = reg
-        .execute(Operation::Sync { dir: None })
+        .execute_mcp("sync", None)
         .await
         .expect("sync should succeed");
 
@@ -555,7 +500,7 @@ async fn test_sync_indexes_from_fns() {
     assert_eq!(result["pages_removed"], 0);
     assert!(result["errors"].as_array().unwrap().is_empty());
 
-    let stats = reg.execute(Operation::Stats).await.unwrap();
+    let stats = reg.execute_mcp("stats", None).await.unwrap();
     assert_eq!(stats["total_pages"], 2);
 }
 
@@ -599,7 +544,7 @@ async fn test_sync_removes_deleted_pages() {
         .mount(&server)
         .await;
 
-    reg.execute(Operation::Sync { dir: None })
+    reg.execute_mcp("sync", None)
         .await
         .expect("first sync should succeed");
 
@@ -624,13 +569,13 @@ async fn test_sync_removes_deleted_pages() {
         .await;
 
     let result = reg
-        .execute(Operation::Sync { dir: None })
+        .execute_mcp("sync", None)
         .await
         .expect("second sync should succeed");
 
     assert_eq!(result["pages_removed"], 1);
 
-    let stats = reg.execute(Operation::Stats).await.unwrap();
+    let stats = reg.execute_mcp("stats", None).await.unwrap();
     assert_eq!(stats["total_pages"], 1);
 }
 
@@ -661,9 +606,7 @@ async fn test_maintain_detects_orphans() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute(Operation::Maintain {
-            scope: Some("orphans".into()),
-        })
+        .execute_mcp("maintain", Some(json!({"scope": "orphans"}).as_object().cloned().unwrap()))
         .await
         .expect("maintain should succeed");
 
@@ -706,7 +649,7 @@ async fn test_stats_returns_counts() {
     let config = test_config(&server.uri());
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
-    let result = reg.execute(Operation::Stats).await.expect("stats should succeed");
+    let result = reg.execute_mcp("stats", None).await.expect("stats should succeed");
 
     assert_eq!(result["total_pages"], 3);
     assert!(result["total_links"].as_i64().unwrap() >= 1);
@@ -724,21 +667,21 @@ async fn test_reindex_rebuilds_index() {
     setup_list_mock(&server, &["pre-existing.md"]).await;
     setup_note_get_mock(&server, "pre-existing.md", &md).await;
 
-    reg.execute(Operation::Sync { dir: None })
+    reg.execute_mcp("sync", None)
         .await
         .expect("initial sync should succeed");
 
-    let stats_before = reg.execute(Operation::Stats).await.unwrap();
+    let stats_before = reg.execute_mcp("stats", None).await.unwrap();
     assert_eq!(stats_before["total_pages"], 1);
 
     let result = reg
-        .execute(Operation::Reindex)
+        .execute_mcp("reindex", None)
         .await
         .expect("reindex should succeed");
 
     assert_eq!(result["reindexed"], true);
 
-    let stats_after = reg.execute(Operation::Stats).await.unwrap();
+    let stats_after = reg.execute_mcp("stats", None).await.unwrap();
     assert_eq!(stats_after["total_pages"], 1);
 }
 
@@ -750,24 +693,12 @@ async fn test_page_etag_conflict() {
 
     setup_note_put_mock(&server, "etag-page").await;
 
-    reg.execute(Operation::PagePut {
-        slug: "etag-page".into(),
-        body: "Content.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Etag Page")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "etag-page", "body": "Content.\n", "frontmatter": sample_frontmatter("Etag Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("first put should succeed");
 
     let result = reg
-        .execute(Operation::PagePut {
-            slug: "etag-page".into(),
-            body: "Content.\n".into(),
-            frontmatter_updates: Some(sample_frontmatter("Etag Page")),
-            timeline_append: sample_timeline("Updated"),
-            etag: Some("wrong-etag-hash".into()),
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "etag-page", "body": "Content.\n", "frontmatter": sample_frontmatter("Etag Page"), "timeline": {"content": "Updated"}, "etag": "wrong-etag-hash"}).as_object().cloned().unwrap()))
         .await;
 
     assert!(result.is_err());
@@ -792,9 +723,7 @@ async fn test_fns_error_propagates() {
         .await;
 
     let result = reg
-        .execute(Operation::PageGet {
-            slug: "nonexistent".into(),
-        })
+        .execute_mcp("page.get", Some(json!({"slug": "nonexistent"}).as_object().cloned().unwrap()))
         .await;
 
     assert!(result.is_err());
@@ -815,13 +744,7 @@ async fn test_structured_api_roundtrip() {
     setup_note_put_mock(&server, "structured-test").await;
 
     let put_result = reg
-        .execute(Operation::PagePut {
-            slug: "structured-test".into(),
-            body: "Structured body content.\n".into(),
-            frontmatter_updates: Some(sample_frontmatter("Structured Test")),
-            timeline_append: sample_timeline("Created via API"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "structured-test", "body": "Structured body content.\n", "frontmatter": sample_frontmatter("Structured Test"), "timeline": {"content": "Created via API"}}).as_object().cloned().unwrap()))
         .await
         .expect("put should succeed");
 
@@ -831,15 +754,13 @@ async fn test_structured_api_roundtrip() {
     assert_eq!(put_result["timeline_count"], 1);
 
     let content_with_timeline = format!(
-        "---\ntitle: Structured Test\npage_type: Entity\ntags:\n  - test\nrelated: []\nsources: []\nstatus: Evergreen\n---\nStructured body content.\n---\n- {}: Created via API\n",
+        "---\ntitle: Structured Test\npage_type: Entity\ntags:\n  - test\nsources: []\n---\nStructured body content.\n---\n- {}: Created via API\n",
         today
     );
     setup_note_get_mock(&server, "structured-test", &content_with_timeline).await;
 
     let get_result = reg
-        .execute(Operation::PageGet {
-            slug: "structured-test".into(),
-        })
+        .execute_mcp("page.get", Some(json!({"slug": "structured-test"}).as_object().cloned().unwrap()))
         .await
         .expect("get should succeed");
 
@@ -864,13 +785,7 @@ async fn test_timeline_append_only() {
     setup_note_put_mock(&server, "timeline-test").await;
 
     let result1 = reg
-        .execute(Operation::PagePut {
-            slug: "timeline-test".into(),
-            body: "Initial body.\n".into(),
-            frontmatter_updates: Some(sample_frontmatter("Timeline Test")),
-            timeline_append: sample_timeline("First entry"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "timeline-test", "body": "Initial body.\n", "frontmatter": sample_frontmatter("Timeline Test"), "timeline": {"content": "First entry"}}).as_object().cloned().unwrap()))
         .await
         .expect("first put should succeed");
     assert_eq!(result1["timeline_count"], 1);
@@ -886,13 +801,7 @@ async fn test_timeline_append_only() {
         .await;
 
     let result2 = reg
-        .execute(Operation::PagePut {
-            slug: "timeline-test".into(),
-            body: "Updated body.\n".into(),
-            frontmatter_updates: None,
-            timeline_append: sample_timeline("Second entry"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "timeline-test", "body": "Updated body.\n", "timeline": {"content": "Second entry"}}).as_object().cloned().unwrap()))
         .await
         .expect("second put should succeed");
     assert_eq!(result2["timeline_count"], 2);
@@ -905,9 +814,7 @@ async fn test_timeline_append_only() {
     setup_note_get_mock(&server, "timeline-test", &content_2).await;
 
     let get_result = reg
-        .execute(Operation::PageGet {
-            slug: "timeline-test".into(),
-        })
+        .execute_mcp("page.get", Some(json!({"slug": "timeline-test"}).as_object().cloned().unwrap()))
         .await
         .expect("get should succeed");
 
@@ -931,25 +838,19 @@ async fn test_frontmatter_merge() {
         "title": "Original Title",
         "page_type": "Concept",
         "tags": ["rust", "test"],
-        "related": ["other-page"],
+        
         "sources": ["https://example.com"],
-        "status": "Budding"
+        "visibility": "shared"
     });
     setup_note_put_mock(&server, "merge-test").await;
 
     let _result1 = reg
-        .execute(Operation::PagePut {
-            slug: "merge-test".into(),
-            body: "Original body.\n".into(),
-            frontmatter_updates: Some(fm_full),
-            timeline_append: sample_timeline("Created"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "merge-test", "body": "Original body.\n", "frontmatter": fm_full, "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
         .await
         .expect("first put should succeed");
 
     let content_original = format!(
-        "---\ntitle: Original Title\npage_type: Concept\ntags:\n  - rust\n  - test\nrelated:\n  - other-page\nsources:\n  - https://example.com\nstatus: Budding\n---\nOriginal body.\n---\n- {}: Created\n",
+        "---\ntitle: Original Title\npage_type: Concept\ntags:\n  - rust\n  - test\nsources:\n  - https://example.com\n---\nOriginal body.\n---\n- {}: Created\n",
         today
     );
     Mock::given(method("GET"))
@@ -963,43 +864,32 @@ async fn test_frontmatter_merge() {
 
     let fm_partial = serde_json::json!({
         "title": "Updated Title",
-        "status": "Evergreen"
+        "visibility": "shared"
     });
 
     let result2 = reg
-        .execute(Operation::PagePut {
-            slug: "merge-test".into(),
-            body: "Updated body.\n".into(),
-            frontmatter_updates: Some(fm_partial),
-            timeline_append: sample_timeline("Updated"),
-            etag: None,
-        })
+        .execute_mcp("page.put", Some(json!({"slug": "merge-test", "body": "Updated body.\n", "frontmatter": fm_partial, "timeline": {"content": "Updated"}}).as_object().cloned().unwrap()))
         .await
         .expect("second put should succeed");
     assert_eq!(result2["timeline_count"], 2);
 
     let content_merged = format!(
-        "---\ntitle: Updated Title\npage_type: Concept\ntags:\n  - rust\n  - test\nrelated:\n  - other-page\nsources:\n  - https://example.com\nstatus: Evergreen\n---\nUpdated body.\n---\n- {}: Created\n- {}: Updated\n",
+        "---\ntitle: Updated Title\npage_type: Concept\ntags:\n  - rust\n  - test\nsources:\n  - https://example.com\n---\nUpdated body.\n---\n- {}: Created\n- {}: Updated\n",
         today, today
     );
     setup_note_get_mock(&server, "merge-test", &content_merged).await;
 
     let get_result = reg
-        .execute(Operation::PageGet {
-            slug: "merge-test".into(),
-        })
+        .execute_mcp("page.get", Some(json!({"slug": "merge-test"}).as_object().cloned().unwrap()))
         .await
         .expect("get should succeed");
 
     let fm = get_result["frontmatter"].as_object().unwrap();
     assert_eq!(fm["title"], "Updated Title");
-    assert_eq!(fm["status"], "Evergreen");
     assert_eq!(fm["page_type"], "Concept");
     let tags = fm["tags"].as_array().unwrap();
     assert!(tags.iter().any(|t| t == "rust"));
     assert!(tags.iter().any(|t| t == "test"));
-    let related = fm["related"].as_array().unwrap();
-    assert!(related.iter().any(|r| r == "other-page"));
     let sources = fm["sources"].as_array().unwrap();
     assert!(sources.iter().any(|s| s == "https://example.com"));
 }
@@ -1013,7 +903,7 @@ async fn test_page_list_with_folders() {
     setup_folders_mock(&server, &["wiki", "projects", "archive"]).await;
 
     let result = reg
-        .execute(Operation::PageList { dir: None })
+        .execute_mcp("page.list", None)
         .await
         .expect("list should succeed");
 
@@ -1038,20 +928,12 @@ async fn test_maintain_lint_clean() {
     let reg = test_registry(&server.uri()).await;
 
     setup_note_put_mock(&server, "valid-page").await;
-    reg.execute(Operation::PagePut {
-        slug: "valid-page".into(),
-        body: "Valid content.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Valid Page")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "valid-page", "body": "Valid content.\n", "frontmatter": sample_frontmatter("Valid Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put should succeed");
 
     let result = reg
-        .execute(Operation::Maintain {
-            scope: Some("lint".into()),
-        })
+        .execute_mcp("maintain", Some(json!({"scope": "lint"}).as_object().cloned().unwrap()))
         .await
         .expect("maintain should succeed");
 
@@ -1067,31 +949,17 @@ async fn test_maintain_backlinks_clean() {
     let reg = test_registry(&server.uri()).await;
 
     setup_note_put_mock(&server, "page-a").await;
-    reg.execute(Operation::PagePut {
-        slug: "page-a".into(),
-        body: "See [[page-b]] for more.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Page A")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "page-a", "body": "See [[page-b]] for more.\n", "frontmatter": sample_frontmatter("Page A"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put page-a should succeed");
 
     setup_note_put_mock(&server, "page-b").await;
-    reg.execute(Operation::PagePut {
-        slug: "page-b".into(),
-        body: "Page B content.\n".into(),
-        frontmatter_updates: Some(sample_frontmatter("Page B")),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+    reg.execute_mcp("page.put", Some(json!({"slug": "page-b", "body": "Page B content.\n", "frontmatter": sample_frontmatter("Page B"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put page-b should succeed");
 
     let result = reg
-        .execute(Operation::Maintain {
-            scope: Some("backlinks".into()),
-        })
+        .execute_mcp("maintain", Some(json!({"scope": "backlinks"}).as_object().cloned().unwrap()))
         .await
         .expect("maintain should succeed");
 
@@ -1110,29 +978,19 @@ async fn test_search_cjk() {
     let reg = test_registry(&server.uri()).await;
 
     setup_note_put_mock(&server, "cjk-page").await;
-    reg.execute(Operation::PagePut {
-        slug: "cjk-page".into(),
-        body: "这是一条测试记录，用于验证中文搜索功能。\n".into(),
-        frontmatter_updates: Some(serde_json::json!({
+    reg.execute_mcp("page.put", Some(json!({"slug": "cjk-page", "body": "这是一条测试记录，用于验证中文搜索功能。\n", "frontmatter": serde_json::json!({
             "title": "中文测试页面",
             "page_type": "Concept",
             "tags": ["test"],
-            "related": [],
+            
             "sources": [],
-            "status": "Evergreen"
-        })),
-        timeline_append: sample_timeline("Created"),
-        etag: None,
-    })
+            "visibility": "shared"
+        }), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
     .await
     .expect("put should succeed");
 
     let result = reg
-        .execute(Operation::Search {
-            query: "中文搜索".into(),
-            limit: Some(10),
-            type_filter: None,
-        })
+        .execute_mcp("search", Some(json!({"query": "中文搜索", "limit": 10}).as_object().cloned().unwrap()))
         .await
         .expect("search should succeed");
 
@@ -1156,7 +1014,7 @@ async fn test_sync_normalizes_slugs() {
     setup_note_get_mock(&server, "folder/nested.md", &md2).await;
 
     let result = reg
-        .execute(Operation::Sync { dir: None })
+        .execute_mcp("sync", None)
         .await
         .expect("sync should succeed");
 

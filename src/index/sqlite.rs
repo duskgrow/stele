@@ -112,6 +112,18 @@ impl IndexEngine {
             .await
             .map_err(|e| Error::Storage(format!("schema init: {e}")))?;
 
+        for sql in [
+            "ALTER TABLE pages ADD COLUMN visibility TEXT NOT NULL DEFAULT 'shared'",
+            "ALTER TABLE pages ADD COLUMN created_by TEXT",
+        ] {
+            if let Err(e) = sqlx::query(sql).execute(&self.pool).await {
+                let err_str = e.to_string().to_lowercase();
+                if !err_str.contains("duplicate column name") {
+                    return Err(Error::Storage(format!("schema migration: {e}")));
+                }
+            }
+        }
+
         sqlx::query(
             "UPDATE pages SET slug = SUBSTR(slug, 1, LENGTH(slug) - 3) WHERE slug LIKE '%.md'",
         )
@@ -160,8 +172,9 @@ impl IndexEngine {
             r#"
             INSERT INTO pages (
                 slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
-                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at,
+                visibility, created_by
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(slug) DO UPDATE SET
                 title = excluded.title,
                 page_type = excluded.page_type,
@@ -173,7 +186,9 @@ impl IndexEngine {
                 timeline_text = excluded.timeline_text,
                 frontmatter_json = excluded.frontmatter_json,
                 tags_json = excluded.tags_json,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                visibility = excluded.visibility,
+                created_by = excluded.created_by
             "#,
         )
         .bind(&page.slug)
@@ -189,6 +204,8 @@ impl IndexEngine {
         .bind(&tags_json)
         .bind(&now)
         .bind(&now)
+        .bind(&page.frontmatter.visibility)
+        .bind(&page.frontmatter.created_by)
         .execute(&self.pool)
         .await
         .map_err(|e| Error::Storage(format!("index_page: {e}")))?;
@@ -380,6 +397,41 @@ mod tests {
         assert!(table_names.contains(&"pages".to_string()));
         assert!(table_names.contains(&"links".to_string()));
         assert!(table_names.contains(&"pages_fts".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_visibility_and_created_by_columns_exist() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        let columns: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM pragma_table_info('pages') WHERE name IN ('visibility', 'created_by')",
+        )
+        .fetch_all(&engine.pool)
+        .await
+        .unwrap();
+
+        let col_names: Vec<String> = columns.into_iter().map(|c| c.0).collect();
+        assert!(col_names.contains(&"visibility".to_string()));
+        assert!(col_names.contains(&"created_by".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_schema_migration_idempotent() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        engine.init().await.unwrap();
+        engine.init().await.unwrap();
+        engine.init().await.unwrap();
+
+        let columns: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM pragma_table_info('pages') WHERE name IN ('visibility', 'created_by')",
+        )
+        .fetch_all(&engine.pool)
+        .await
+        .unwrap();
+
+        let col_names: Vec<String> = columns.into_iter().map(|c| c.0).collect();
+        assert!(col_names.contains(&"visibility".to_string()));
+        assert!(col_names.contains(&"created_by".to_string()));
     }
 
     #[tokio::test]
@@ -626,15 +678,15 @@ mod tests {
 
         engine.update_links("page-a", &links).await.unwrap();
 
-        let outgoing = graph::get_outlinks(engine.pool(), "page-a").await.unwrap();
+        let outgoing = graph::get_outlinks(engine.pool(), "page-a", None).await.unwrap();
         assert_eq!(outgoing.len(), 2);
 
-        let backlinks_b = graph::get_backlinks(engine.pool(), "page-b").await.unwrap();
+        let backlinks_b = graph::get_backlinks(engine.pool(), "page-b", None).await.unwrap();
         assert_eq!(backlinks_b.len(), 1);
         assert_eq!(backlinks_b[0].source_slug, "page-a");
         assert_eq!(backlinks_b[0].link_type, LinkType::Plain);
 
-        let backlinks_c = graph::get_backlinks(engine.pool(), "page-c").await.unwrap();
+        let backlinks_c = graph::get_backlinks(engine.pool(), "page-c", None).await.unwrap();
         assert_eq!(backlinks_c.len(), 1);
         assert_eq!(
             backlinks_c[0].link_type,
@@ -738,7 +790,7 @@ mod tests {
 
         let page1 = sample_page("page-1", "Page 1", PageType::Entity, "Content 1");
         let page2 = sample_page("page-2", "Page 2", PageType::Concept, "Content 2");
-        let page3 = sample_page("page-3", "Page 3", PageType::Stub, "Content 3");
+        let page3 = sample_page("page-3", "Page 3", PageType::Entity, "Content 3");
 
         engine.index_page(&page1).await.unwrap();
         engine.index_page(&page2).await.unwrap();

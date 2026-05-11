@@ -68,7 +68,7 @@ async fn sync_directory(
             }
         };
 
-        let slug = match page_parser::normalize_slug(&file_path) {
+        let slug = match page_parser::normalize_slug(file_path) {
             Ok(s) => s,
             Err(e) => {
                 let err_msg = format!("failed to normalize slug for {}: {}", file_path, e);
@@ -235,9 +235,7 @@ mod tests {
 title: {}
 page_type: Concept
 tags: []
-related: []
 sources: []
-status: Seedling
 ---
 {}
 ",

@@ -9,9 +9,10 @@ pub async fn handle_search(
     query: &str,
     limit: Option<i64>,
     type_filter: Option<&str>,
+    sort: Option<&str>,
 ) -> Result<serde_json::Value> {
     let limit_val = limit.unwrap_or(10);
-    let results = keyword::keyword_search(index.pool(), query, limit_val, type_filter).await?;
+    let results = keyword::keyword_search(index.pool(), query, limit_val, type_filter, sort).await?;
 
     let results_json: Vec<serde_json::Value> = results
         .iter()
@@ -36,12 +37,26 @@ pub async fn handle_graph_query(
     index: &IndexEngine,
     slug: &str,
     depth: Option<usize>,
+    link_type: Option<&str>,
+    direction: Option<&str>,
 ) -> Result<serde_json::Value> {
     let depth_val = depth.unwrap_or(1);
-    let outlinks = graph::get_outlinks(index.pool(), slug).await?;
-    let neighbors = graph::get_neighbors(index.pool(), slug, depth_val).await?;
+    let dir = direction.unwrap_or("out");
 
-    let outlinks_json: Vec<serde_json::Value> = outlinks
+    let direct_links = match dir {
+        "in" => graph::get_backlinks(index.pool(), slug, link_type).await?,
+        "both" => {
+            let mut out = graph::get_outlinks(index.pool(), slug, link_type).await?;
+            let mut incoming = graph::get_backlinks(index.pool(), slug, link_type).await?;
+            out.append(&mut incoming);
+            out
+        }
+        _ => graph::get_outlinks(index.pool(), slug, link_type).await?,
+    };
+
+    let neighbors = graph::get_neighbors(index.pool(), slug, depth_val, link_type, direction).await?;
+
+    let outlinks_json: Vec<serde_json::Value> = direct_links
         .iter()
         .map(|link| {
             json!({
@@ -74,7 +89,7 @@ pub async fn handle_graph_backlinks(
     index: &IndexEngine,
     slug: &str,
 ) -> Result<serde_json::Value> {
-    let backlinks = graph::get_backlinks(index.pool(), slug).await?;
+    let backlinks = graph::get_backlinks(index.pool(), slug, None).await?;
     let count = backlinks.len();
 
     let backlinks_json: Vec<serde_json::Value> = backlinks
@@ -124,7 +139,7 @@ mod tests {
         );
         engine.index_page(&page).await.unwrap();
 
-        let result = handle_search(&engine, "systems", Some(10), None)
+        let result = handle_search(&engine, "systems", Some(10), None, None)
             .await
             .unwrap();
 
@@ -140,7 +155,7 @@ mod tests {
         let page = sample_page("test", "Test", PageType::Concept, "Content");
         engine.index_page(&page).await.unwrap();
 
-        let result = handle_search(&engine, "", Some(10), None)
+        let result = handle_search(&engine, "", Some(10), None, None)
             .await
             .unwrap();
 
@@ -148,7 +163,7 @@ mod tests {
         assert_eq!(result["total"], 0);
         assert!(result["results"].as_array().unwrap().is_empty());
 
-        let result = handle_search(&engine, "   ", Some(10), None)
+        let result = handle_search(&engine, "   ", Some(10), None, None)
             .await
             .unwrap();
 
@@ -184,7 +199,7 @@ mod tests {
         ];
         engine.update_links("page-a", &links).await.unwrap();
 
-        let result = handle_graph_query(&engine, "page-a", Some(1))
+        let result = handle_graph_query(&engine, "page-a", Some(1), None, None)
             .await
             .unwrap();
 
@@ -200,6 +215,81 @@ mod tests {
             .collect();
         assert!(outlink_slugs.contains(&"page-b".to_string()));
         assert!(outlink_slugs.contains(&"page-c".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_graph_query_with_direction_in() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        let page_a = sample_page("page-a", "Page A", PageType::Entity, "A content");
+        let page_b = sample_page("page-b", "Page B", PageType::Concept, "B content");
+        let page_c = sample_page("page-c", "Page C", PageType::Source, "C content");
+
+        engine.index_page(&page_a).await.unwrap();
+        engine.index_page(&page_b).await.unwrap();
+        engine.index_page(&page_c).await.unwrap();
+
+        let links = vec![
+            Link {
+                source_slug: "page-b".to_string(),
+                target_slug: "page-a".to_string(),
+                link_type: LinkType::Plain,
+                context_snippet: None,
+            },
+            Link {
+                source_slug: "page-c".to_string(),
+                target_slug: "page-a".to_string(),
+                link_type: LinkType::Custom("references".to_string()),
+                context_snippet: None,
+            },
+        ];
+        engine.update_links("page-b", &links[0..1]).await.unwrap();
+        engine.update_links("page-c", &links[1..2]).await.unwrap();
+
+        let result = handle_graph_query(&engine, "page-a", Some(1), None, Some("in"))
+            .await
+            .unwrap();
+
+        assert_eq!(result["outlinks"].as_array().unwrap().len(), 2);
+        assert_eq!(result["neighbors"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_graph_query_with_link_type_filter() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        let page_a = sample_page("page-a", "Page A", PageType::Entity, "A content");
+        let page_b = sample_page("page-b", "Page B", PageType::Concept, "B content");
+        let page_c = sample_page("page-c", "Page C", PageType::Source, "C content");
+
+        engine.index_page(&page_a).await.unwrap();
+        engine.index_page(&page_b).await.unwrap();
+        engine.index_page(&page_c).await.unwrap();
+
+        let links = vec![
+            Link {
+                source_slug: "page-a".to_string(),
+                target_slug: "page-b".to_string(),
+                link_type: LinkType::Plain,
+                context_snippet: None,
+            },
+            Link {
+                source_slug: "page-a".to_string(),
+                target_slug: "page-c".to_string(),
+                link_type: LinkType::Custom("cites".to_string()),
+                context_snippet: None,
+            },
+        ];
+        engine.update_links("page-a", &links).await.unwrap();
+
+        let result = handle_graph_query(&engine, "page-a", Some(1), Some("plain"), None)
+            .await
+            .unwrap();
+
+        assert_eq!(result["outlinks"].as_array().unwrap().len(), 1);
+        assert_eq!(result["outlinks"][0]["target_slug"], "page-b");
+        assert_eq!(result["neighbors"].as_array().unwrap().len(), 1);
+        assert_eq!(result["neighbors"][0]["slug"], "page-b");
     }
 
     #[tokio::test]

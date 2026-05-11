@@ -17,23 +17,29 @@ pub struct Frontmatter {
     pub title: String,
     pub page_type: PageType,
     pub tags: Vec<String>,
-    pub related: Vec<String>,
     pub sources: Vec<String>,
     pub date: Option<String>,
-    pub status: PageStatus,
+    #[serde(default = "default_shared")]
+    pub visibility: String,
+    #[serde(default)]
+    pub created_by: Option<String>,
+}
+
+fn default_shared() -> String {
+    "shared".to_string()
 }
 
 /// Classification of a page's role in the knowledge base.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub enum PageType {
+    #[serde(alias = "Stub")]
     Entity,
     Concept,
     Source,
     Query,
     Synthesis,
     Comparison,
-    Stub,
 }
 
 impl std::fmt::Display for PageType {
@@ -45,18 +51,8 @@ impl std::fmt::Display for PageType {
             Self::Query => write!(f, "Query"),
             Self::Synthesis => write!(f, "Synthesis"),
             Self::Comparison => write!(f, "Comparison"),
-            Self::Stub => write!(f, "Stub"),
         }
     }
-}
-
-/// Maturity level of a page in the knowledge base.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "PascalCase")]
-pub enum PageStatus {
-    Seedling,
-    Budding,
-    Evergreen,
 }
 
 /// A single dated entry in a page's timeline section.
@@ -86,10 +82,10 @@ mod tests {
             title: "Test Page".to_string(),
             page_type: PageType::Concept,
             tags: vec!["rust".to_string(), "types".to_string()],
-            related: vec!["other-page".to_string()],
             sources: vec!["https://example.com".to_string()],
             date: Some("2024-01-01".to_string()),
-            status: PageStatus::Budding,
+            visibility: "shared".to_string(),
+            created_by: None,
         }
     }
 
@@ -205,26 +201,6 @@ mod tests {
             serde_json::to_string(&PageType::Comparison).unwrap(),
             "\"Comparison\""
         );
-        assert_eq!(
-            serde_json::to_string(&PageType::Stub).unwrap(),
-            "\"Stub\""
-        );
-    }
-
-    #[test]
-    fn page_status_variants_serialize_correctly() {
-        assert_eq!(
-            serde_json::to_string(&PageStatus::Seedling).unwrap(),
-            "\"Seedling\""
-        );
-        assert_eq!(
-            serde_json::to_string(&PageStatus::Budding).unwrap(),
-            "\"Budding\""
-        );
-        assert_eq!(
-            serde_json::to_string(&PageStatus::Evergreen).unwrap(),
-            "\"Evergreen\""
-        );
     }
 
     #[test]
@@ -237,21 +213,56 @@ mod tests {
             serde_json::from_str::<PageType>("\"Concept\"").unwrap(),
             PageType::Concept
         );
-        assert_eq!(
-            serde_json::from_str::<PageType>("\"Stub\"").unwrap(),
-            PageType::Stub
-        );
     }
 
     #[test]
-    fn page_status_deserializes_correctly() {
-        assert_eq!(
-            serde_json::from_str::<PageStatus>("\"Seedling\"").unwrap(),
-            PageStatus::Seedling
-        );
-        assert_eq!(
-            serde_json::from_str::<PageStatus>("\"Evergreen\"").unwrap(),
-            PageStatus::Evergreen
-        );
+    fn visibility_defaults_to_shared() {
+        let fm: Frontmatter = serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#).unwrap();
+        assert_eq!(fm.visibility, "shared");
+    }
+
+    #[test]
+    fn created_by_defaults_to_none() {
+        let fm: Frontmatter = serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#).unwrap();
+        assert_eq!(fm.created_by, None);
+    }
+
+    #[test]
+    fn stub_alias_deserializes_to_entity_json() {
+        let pt: PageType = serde_json::from_str("\"Stub\"").unwrap();
+        assert_eq!(pt, PageType::Entity);
+    }
+
+    #[test]
+    fn stub_alias_deserializes_to_entity_yaml() {
+        let pt: PageType = serde_yaml::from_str("Stub").unwrap();
+        assert_eq!(pt, PageType::Entity);
+    }
+
+    #[test]
+    fn old_status_field_silently_ignored_json() {
+        let fm: Frontmatter = serde_json::from_str(
+            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"status":"Seedling"}"#
+        ).unwrap();
+        assert_eq!(fm.title, "T");
+        assert_eq!(fm.page_type, PageType::Entity);
+    }
+
+    #[test]
+    fn old_related_field_silently_ignored_json() {
+        let fm: Frontmatter = serde_json::from_str(
+            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"related":["foo","bar"]}"#
+        ).unwrap();
+        assert_eq!(fm.title, "T");
+        assert_eq!(fm.page_type, PageType::Entity);
+    }
+
+    #[test]
+    fn all_old_fields_combined_ignored_json() {
+        let fm: Frontmatter = serde_json::from_str(
+            r#"{"title":"T","page_type":"Stub","tags":[],"sources":[],"status":"Seedling","related":["foo","bar"]}"#
+        ).unwrap();
+        assert_eq!(fm.title, "T");
+        assert_eq!(fm.page_type, PageType::Entity);
     }
 }

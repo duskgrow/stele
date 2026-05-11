@@ -1,174 +1,66 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::{Arg, Command};
 use serde_json::json;
 
-use crate::ops::{Operation, OperationRegistry};
-use crate::types::{Result, TimelineAppendInput};
+use crate::ops::OperationRegistry;
+use crate::ops::handler::OpHandler;
+use crate::types::Result;
 
-/// Command-line interface for the stele knowledge manager.
-#[derive(Parser, Debug)]
-#[command(name = "stele")]
-#[command(about = "Stele CLI - Personal knowledge management")]
-pub struct SteleCli {
-    #[command(subcommand)]
-    pub command: Commands,
-}
+/// Build the CLI command tree dynamically from inventory.
+pub(crate) fn build_cli() -> Command {
+    let mut groups: BTreeMap<&'static str, Vec<&'static dyn OpHandler>> = BTreeMap::new();
+    let mut top_level: Vec<&'static dyn OpHandler> = Vec::new();
 
-#[derive(Subcommand, Debug)]
-pub enum Commands {
-    /// Start the MCP server
-    Serve {
-        /// Transport type
-        #[arg(long, value_name = "TRANSPORT", default_value = "stdio")]
-        transport: String,
-        /// Port for HTTP transport
-        #[arg(long, value_name = "PORT", default_value = "3000")]
-        port: u16,
-    },
-    /// Page operations
-    Page {
-        #[command(subcommand)]
-        command: PageCommands,
-    },
-    /// Full-text search
-    Search {
-        /// Search query
-        query: String,
-        /// Result limit
-        #[arg(long, value_name = "N")]
-        limit: Option<i64>,
-        /// Type filter
-        #[arg(long, value_name = "TYPE")]
-        type_filter: Option<String>,
-    },
-    /// Graph query
-    Graph {
-        /// Page slug
-        slug: String,
-        /// Query depth
-        #[arg(long, value_name = "N")]
-        depth: Option<usize>,
-    },
-    /// Synchronize from FNS vault
-    Sync {
-        /// Root directory
-        #[arg(long, value_name = "DIR")]
-        dir: Option<String>,
-    },
-    /// Run maintenance tasks
-    Maintain {
-        /// Maintenance scope
-        #[arg(long, value_name = "SCOPE", default_value = "full")]
-        scope: String,
-    },
-    /// Get index statistics
-    Stats,
-    /// Rebuild search index
-    Reindex,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum PageCommands {
-    /// Get a page by slug
-    Get { slug: String },
-    /// Create or update a page
-    Put {
-        slug: String,
-        /// Body content from file
-        #[arg(long, value_name = "PATH")]
-        file: Option<String>,
-        /// Body content as text
-        #[arg(long, value_name = "TEXT")]
-        body: Option<String>,
-        /// Frontmatter updates as JSON
-        #[arg(long, value_name = "JSON")]
-        frontmatter: Option<String>,
-        /// Timeline entry content (required)
-        #[arg(long, value_name = "TEXT")]
-        timeline_content: String,
-        /// Timeline entry agent name
-        #[arg(long, value_name = "AGENT")]
-        timeline_agent: Option<String>,
-    },
-    /// Delete a page
-    Delete { slug: String },
-    /// List pages
-    List {
-        /// Directory filter
-        dir: Option<String>,
-    },
-}
-
-fn command_to_operation(cmd: Commands) -> Result<Operation> {
-    let op = match cmd {
-        Commands::Serve { .. } => {
-            return Err(crate::types::Error::Config(
-                "serve is handled separately, not dispatched through OperationRegistry".into(),
-            ));
+    for handler in inventory::iter::<&'static dyn OpHandler>.into_iter() {
+        let name = handler.name();
+        if let Some((prefix, _suffix)) = name.split_once('.') {
+            groups.entry(prefix).or_default().push(*handler);
+        } else {
+            top_level.push(*handler);
         }
-        Commands::Page { command } => match command {
-            PageCommands::Get { slug } => Operation::PageGet { slug },
-            PageCommands::Put { slug, file, body, frontmatter, timeline_content, timeline_agent } => {
-                let body_str = match (file, body) {
-                    (Some(path), None) => std::fs::read_to_string(&path)?,
-                    (None, Some(text)) => text,
-                    (Some(_), Some(_)) => {
-                        return Err(crate::types::Error::Config(
-                            "cannot specify both --file and --body".into(),
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(crate::types::Error::Config(
-                            "must specify either --file or --body".into(),
-                        ));
-                    }
-                };
-                let frontmatter_updates = match frontmatter {
-                    Some(json_str) => {
-                        let val: serde_json::Value = serde_json::from_str(&json_str)?;
-                        Some(val)
-                    }
-                    None => None,
-                };
-                Operation::PagePut {
-                    slug,
-                    body: body_str,
-                    frontmatter_updates,
-                    timeline_append: TimelineAppendInput {
-                        content: timeline_content,
-                        agent: timeline_agent,
-                    },
-                    etag: None,
-                }
-            }
-            PageCommands::Delete { slug } => Operation::PageDelete { slug },
-            PageCommands::List { dir } => Operation::PageList { dir },
-        },
-        Commands::Search {
-            query,
-            limit,
-            type_filter,
-        } => Operation::Search {
-            query,
-            limit,
-            type_filter,
-        },
-        Commands::Graph { slug, depth } => Operation::GraphQuery { slug, depth },
-        Commands::Sync { dir } => Operation::Sync { dir },
-        Commands::Maintain { scope } => Operation::Maintain {
-            scope: Some(scope),
-        },
-        Commands::Stats => Operation::Stats,
-        Commands::Reindex => Operation::Reindex,
-    };
-    Ok(op)
+    }
+
+    let mut cmd = Command::new("stele")
+        .about("Stele CLI - Personal knowledge management")
+        .subcommand(
+            Command::new("serve")
+                .about("Start the MCP server")
+                .arg(Arg::new("transport").long("transport").default_value("stdio"))
+                .arg(Arg::new("port").long("port").value_parser(clap::value_parser!(u16)).default_value("3000"))
+        )
+        .subcommand(
+            Command::new("skill")
+                .about("Skill management")
+                .subcommand(
+                    Command::new("install")
+                        .about("Install skills to target directory")
+                        .arg(Arg::new("target").long("target").default_value("~/.hermes/skills/"))
+                )
+        );
+
+    for (prefix, handlers) in &groups {
+        let mut parent = Command::new(*prefix).about(format!("{} operations", prefix));
+        for handler in handlers {
+            parent = parent.subcommand(handler.cli_command());
+        }
+        cmd = cmd.subcommand(parent);
+    }
+
+    for handler in &top_level {
+        cmd = cmd.subcommand(handler.cli_command());
+    }
+
+    cmd
 }
 
 /// Parse CLI arguments and dispatch to the operation registry.
 pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
-    let cli = match SteleCli::try_parse() {
-        Ok(c) => c,
+    let cmd = build_cli();
+
+    let matches = match cmd.try_get_matches_from(std::env::args()) {
+        Ok(m) => m,
         Err(e) => {
             let err_json = json!({"error": e.to_string()});
             eprintln!("{}", serde_json::to_string_pretty(&err_json).unwrap_or_default());
@@ -176,23 +68,58 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
         }
     };
 
-    match cli.command {
-        Commands::Serve { transport, port } => {
+    match matches.subcommand() {
+        Some(("serve", args)) => {
+            let transport = args.get_one::<String>("transport").unwrap();
+            let port = *args.get_one::<u16>("port").unwrap();
             if transport == "stdio" {
                 crate::mcp::stdio::run_stdio(registry).await
             } else {
-                let result = json!({
-                    "status": "serving",
-                    "transport": transport,
-                    "port": port
-                });
+                let result = json!({"status": "serving", "transport": transport, "port": port});
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
             }
         }
-        cmd => {
-            let op = command_to_operation(cmd)?;
-            match registry.execute(op).await {
+        Some(("skill", skill_matches)) => {
+            match skill_matches.subcommand() {
+                Some(("install", install_matches)) => {
+                    let target = install_matches.get_one::<String>("target").unwrap();
+                    let target_path = crate::skills::expand_tilde(target)?;
+                    crate::skills::install_skills(&target_path)?;
+                    let result = json!({"status": "ok", "target": target_path.to_string_lossy()});
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                    Ok(())
+                }
+                _ => {
+                    eprintln!("No skill subcommand specified. Use --help for usage.");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some((name, sub_matches)) => {
+            let result = if let Some(handler) = inventory::iter::<&'static dyn OpHandler>
+                .into_iter()
+                .find(|h| h.name() == name)
+                .copied()
+            {
+                let op = handler.from_cli_matches(sub_matches)
+                    .map_err(|e| crate::types::Error::Config(e.to_string()))?;
+                registry.execute_op(op).await
+            } else if let Some((sub_name, sub_sub_matches)) = sub_matches.subcommand() {
+                let full_name = format!("{}.{}", name, sub_name);
+                let handler = inventory::iter::<&'static dyn OpHandler>
+                    .into_iter()
+                    .find(|h| h.name() == full_name)
+                    .copied()
+                    .ok_or_else(|| crate::types::Error::Config(format!("unknown op: {}", full_name)))?;
+                let op = handler.from_cli_matches(sub_sub_matches)
+                    .map_err(|e| crate::types::Error::Config(e.to_string()))?;
+                registry.execute_op(op).await
+            } else {
+                Err(crate::types::Error::Config(format!("unknown command: {}", name)))
+            };
+
+            match result {
                 Ok(val) => {
                     println!("{}", serde_json::to_string_pretty(&val)?);
                     Ok(())
@@ -204,148 +131,64 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
                 }
             }
         }
+        None => {
+            eprintln!("No command specified. Use --help for usage.");
+            std::process::exit(1);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
 
     #[test]
     fn test_cli_parses_serve() {
-        let cli = SteleCli::parse_from(["stele", "serve", "--transport", "http", "--port", "8080"]);
-        match cli.command {
-            Commands::Serve { transport, port } => {
-                assert_eq!(transport, "http");
-                assert_eq!(port, 8080);
+        let cmd = build_cli();
+        let matches = cmd.try_get_matches_from(["stele", "serve", "--transport", "http", "--port", "8080"]).unwrap();
+        match matches.subcommand() {
+            Some(("serve", args)) => {
+                assert_eq!(args.get_one::<String>("transport").unwrap(), "http");
+                assert_eq!(*args.get_one::<u16>("port").unwrap(), 8080);
             }
-            other => panic!("expected Serve, got {:?}", other),
+            other => panic!("expected serve, got {:?}", other),
         }
     }
 
     #[test]
     fn test_cli_parses_serve_defaults() {
-        let cli = SteleCli::parse_from(["stele", "serve"]);
-        match cli.command {
-            Commands::Serve { transport, port } => {
-                assert_eq!(transport, "stdio");
-                assert_eq!(port, 3000);
+        let cmd = build_cli();
+        let matches = cmd.try_get_matches_from(["stele", "serve"]).unwrap();
+        match matches.subcommand() {
+            Some(("serve", args)) => {
+                assert_eq!(args.get_one::<String>("transport").unwrap(), "stdio");
+                assert_eq!(*args.get_one::<u16>("port").unwrap(), 3000);
             }
-            other => panic!("expected Serve, got {:?}", other),
+            other => panic!("expected serve, got {:?}", other),
         }
     }
 
     #[test]
     fn test_cli_parses_page_get() {
-        let cli = SteleCli::parse_from(["stele", "page", "get", "hello-world"]);
-        match cli.command {
-            Commands::Page { command } => match command {
-                PageCommands::Get { slug } => {
-                    assert_eq!(slug, "hello-world");
+        let cmd = build_cli();
+        let matches = cmd.try_get_matches_from(["stele", "page", "get", "hello-world"]).unwrap();
+        match matches.subcommand() {
+            Some(("page", page_matches)) => {
+                match page_matches.subcommand() {
+                    Some(("get", get_matches)) => {
+                        assert_eq!(get_matches.get_one::<String>("slug").unwrap(), "hello-world");
+                    }
+                    other => panic!("expected get, got {:?}", other),
                 }
-                other => panic!("expected Get, got {:?}", other),
-            },
-            other => panic!("expected Page, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_search() {
-        let cli = SteleCli::parse_from(["stele", "search", "hello", "--limit", "10", "--type-filter", "note"]);
-        match cli.command {
-            Commands::Search {
-                query,
-                limit,
-                type_filter,
-            } => {
-                assert_eq!(query, "hello");
-                assert_eq!(limit, Some(10));
-                assert_eq!(type_filter, Some("note".to_string()));
             }
-            other => panic!("expected Search, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_stats() {
-        let cli = SteleCli::parse_from(["stele", "stats"]);
-        match cli.command {
-            Commands::Stats => {}
-            other => panic!("expected Stats, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_maintain() {
-        let cli = SteleCli::parse_from(["stele", "maintain", "--scope", "lint"]);
-        match cli.command {
-            Commands::Maintain { scope } => {
-                assert_eq!(scope, "lint");
-            }
-            other => panic!("expected Maintain, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_graph() {
-        let cli = SteleCli::parse_from(["stele", "graph", "foo", "--depth", "2"]);
-        match cli.command {
-            Commands::Graph { slug, depth } => {
-                assert_eq!(slug, "foo");
-                assert_eq!(depth, Some(2));
-            }
-            other => panic!("expected Graph, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_page_put_content() {
-        let cli = SteleCli::parse_from([
-            "stele", "page", "put", "foo",
-            "--body", "hello",
-            "--timeline-content", "created",
-        ]);
-        match cli.command {
-            Commands::Page { command } => match command {
-                PageCommands::Put { slug, body, file, frontmatter, timeline_content, timeline_agent } => {
-                    assert_eq!(slug, "foo");
-                    assert_eq!(body, Some("hello".to_string()));
-                    assert_eq!(file, None);
-                    assert_eq!(frontmatter, None);
-                    assert_eq!(timeline_content, "created");
-                    assert_eq!(timeline_agent, None);
-                }
-                other => panic!("expected Put, got {:?}", other),
-            },
-            other => panic!("expected Page, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_sync() {
-        let cli = SteleCli::parse_from(["stele", "sync", "--dir", "/tmp/vault"]);
-        match cli.command {
-            Commands::Sync { dir } => {
-                assert_eq!(dir, Some("/tmp/vault".to_string()));
-            }
-            other => panic!("expected Sync, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_reindex() {
-        let cli = SteleCli::parse_from(["stele", "reindex"]);
-        match cli.command {
-            Commands::Reindex => {}
-            other => panic!("expected Reindex, got {:?}", other),
+            other => panic!("expected page, got {:?}", other),
         }
     }
 
     #[test]
     fn test_cli_help() {
-        // --help exits with code 0; catch the Clap error which is printed to stdout
-        let result = SteleCli::try_parse_from(["stele", "--help"]);
+        let cmd = build_cli();
+        let result = cmd.try_get_matches_from(["stele", "--help"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         let msg = err.to_string();
@@ -353,200 +196,63 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_command_to_operation_page_get() {
-        let cmd = Commands::Page {
-            command: PageCommands::Get {
-                slug: "test".into(),
-            },
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::PageGet { slug } => assert_eq!(slug, "test"),
-            other => panic!("expected PageGet, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_stats() {
-        let cmd = Commands::Stats;
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::Stats => {}
-            other => panic!("expected Stats, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_reindex() {
-        let cmd = Commands::Reindex;
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::Reindex => {}
-            other => panic!("expected Reindex, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_page_put_content() {
-        let cmd = Commands::Page {
-            command: PageCommands::Put {
-                slug: "foo".into(),
-                file: None,
-                body: Some("hello".into()),
-                frontmatter: None,
-                timeline_content: "created".into(),
-                timeline_agent: None,
-            },
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::PagePut { slug, body, frontmatter_updates, timeline_append, etag } => {
-                assert_eq!(slug, "foo");
-                assert_eq!(body, "hello");
-                assert!(frontmatter_updates.is_none());
-                assert_eq!(timeline_append.content, "created");
-                assert_eq!(timeline_append.agent, None);
-                assert_eq!(etag, None);
+    fn test_cli_parses_skill_install() {
+        let cmd = build_cli();
+        let matches = cmd.try_get_matches_from(["stele", "skill", "install", "--target", "/tmp/test"]).unwrap();
+        match matches.subcommand() {
+            Some(("skill", skill_matches)) => {
+                match skill_matches.subcommand() {
+                    Some(("install", install_matches)) => {
+                        assert_eq!(install_matches.get_one::<String>("target").unwrap(), "/tmp/test");
+                    }
+                    other => panic!("expected install, got {:?}", other),
+                }
             }
-            other => panic!("expected PagePut, got {:?}", other),
+            other => panic!("expected skill, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_cli_command_to_operation_page_put_both_file_and_content_fails() {
-        let cmd = Commands::Page {
-            command: PageCommands::Put {
-                slug: "foo".into(),
-                file: Some("/tmp/test.md".into()),
-                body: Some("hello".into()),
-                frontmatter: None,
-                timeline_content: "created".into(),
-                timeline_agent: None,
-            },
-        };
-        let result = command_to_operation(cmd);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot specify both"));
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_page_put_neither_fails() {
-        let cmd = Commands::Page {
-            command: PageCommands::Put {
-                slug: "foo".into(),
-                file: None,
-                body: None,
-                frontmatter: None,
-                timeline_content: "created".into(),
-                timeline_agent: None,
-            },
-        };
-        let result = command_to_operation(cmd);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("must specify either"));
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_page_delete() {
-        let cmd = Commands::Page {
-            command: PageCommands::Delete {
-                slug: "delete-me".into(),
-            },
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::PageDelete { slug } => assert_eq!(slug, "delete-me"),
-            other => panic!("expected PageDelete, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_page_list() {
-        let cmd = Commands::Page {
-            command: PageCommands::List {
-                dir: Some("notes".into()),
-            },
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::PageList { dir } => assert_eq!(dir, Some("notes".into())),
-            other => panic!("expected PageList, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_search() {
-        let cmd = Commands::Search {
-            query: "rust".into(),
-            limit: Some(10),
-            type_filter: Some("note".into()),
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::Search {
-                query,
-                limit,
-                type_filter,
-            } => {
-                assert_eq!(query, "rust");
-                assert_eq!(limit, Some(10));
-                assert_eq!(type_filter, Some("note".into()));
+    fn test_cli_parses_skill_install_defaults() {
+        let cmd = build_cli();
+        let matches = cmd.try_get_matches_from(["stele", "skill", "install"]).unwrap();
+        match matches.subcommand() {
+            Some(("skill", skill_matches)) => {
+                match skill_matches.subcommand() {
+                    Some(("install", install_matches)) => {
+                        assert_eq!(install_matches.get_one::<String>("target").unwrap(), "~/.hermes/skills/");
+                    }
+                    other => panic!("expected install, got {:?}", other),
+                }
             }
-            other => panic!("expected Search, got {:?}", other),
+            other => panic!("expected skill, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_cli_command_to_operation_graph() {
-        let cmd = Commands::Graph {
-            slug: "foo".into(),
-            depth: Some(2),
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::GraphQuery { slug, depth } => {
-                assert_eq!(slug, "foo");
-                assert_eq!(depth, Some(2));
-            }
-            other => panic!("expected GraphQuery, got {:?}", other),
-        }
-    }
+    fn test_cli_help_shows_all_ops() {
+        let mut cmd = build_cli();
+        let mut buf = Vec::new();
+        cmd.write_help(&mut buf).unwrap();
+        let help = String::from_utf8(buf).unwrap();
 
-    #[test]
-    fn test_cli_command_to_operation_sync() {
-        let cmd = Commands::Sync {
-            dir: Some("/notes".into()),
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::Sync { dir } => assert_eq!(dir, Some("/notes".into())),
-            other => panic!("expected Sync, got {:?}", other),
-        }
-    }
+        assert!(help.contains("serve"), "help should contain 'serve'");
+        assert!(help.contains("skill"), "help should contain 'skill'");
+        assert!(help.contains("page"), "help should contain 'page'");
+        assert!(help.contains("search"), "help should contain 'search'");
+        assert!(help.contains("stats"), "help should contain 'stats'");
+        assert!(help.contains("reindex"), "help should contain 'reindex'");
+        assert!(help.contains("sync"), "help should contain 'sync'");
+        assert!(help.contains("maintain"), "help should contain 'maintain'");
+        assert!(help.contains("graph"), "help should contain 'graph'");
 
-    #[test]
-    fn test_cli_command_to_operation_maintain() {
-        let cmd = Commands::Maintain {
-            scope: "lint".into(),
-        };
-        let op = command_to_operation(cmd).unwrap();
-        match op {
-            Operation::Maintain { scope } => assert_eq!(scope, Some("lint".into())),
-            other => panic!("expected Maintain, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_command_to_operation_serve_error() {
-        let cmd = Commands::Serve {
-            transport: "stdio".into(),
-            port: 3000,
-        };
-        let result = command_to_operation(cmd);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("serve is handled separately"));
+        let page_sub = cmd.find_subcommand("page").unwrap().clone();
+        let mut page_buf = Vec::new();
+        page_sub.clone().write_help(&mut page_buf).unwrap();
+        let page_help = String::from_utf8(page_buf).unwrap();
+        assert!(page_help.contains("get"), "page help should contain 'get'");
+        assert!(page_help.contains("put"), "page help should contain 'put'");
+        assert!(page_help.contains("delete"), "page help should contain 'delete'");
+        assert!(page_help.contains("list"), "page help should contain 'list'");
     }
 }
