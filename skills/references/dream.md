@@ -1,16 +1,3 @@
----
-name: stele-dream
-version: 1.0.0
-description: |
-  Scheduled 11-stage maintenance cycle. Runs nightly to keep the wiki
-  healthy, enriched, and evolving. Inspired by gbrain's Dream Cycle.
-author: duskgrow
-tags: [stele, dream, cron, maintenance, scheduled]
-metadata:
-  hermes:
-    tags: [stele, dream, cron, maintenance]
----
-
 # Stele Dream — The Maintenance Cycle
 
 Scheduled maintenance cycle that keeps the wiki healthy, enriched, and evolving over time.
@@ -79,7 +66,7 @@ Review recent session transcripts for:
 - Ideas expressed but not captured
 - Decisions made but not recorded
 
-Create/enrich pages as needed. (Delegate to `stele-signal` logic)
+Create/enrich pages as needed. (Delegate to `signal-detector` logic)
 
 ### Stage 7: Pattern Discovery
 
@@ -114,7 +101,7 @@ For topics with multiple scattered pages:
 ### Stage 10: Auto-Think
 
 Pick the most interesting unresolved `queries/` page:
-1. Run `stele-think` on it
+1. Run `think` pipeline on it
 2. Update the query page with new findings
 3. Create new pages for discovered entities/concepts
 
@@ -144,9 +131,9 @@ Pages flagged: N
 ```yaml
 schedule: "0 3 * * *"  # Daily at 3am
 prompt: |
-  Run the stele-dream maintenance cycle on the wiki.
+  Run the dream maintenance cycle on the wiki.
   Execute all 11 stages. Report findings.
-skills: [stele, stele-dream, stele-lint, stele-think, stele-signal, stele-enrich, stele-synthesis]
+skills: [stele, dream, lint, think, signal-detector, enrich, synthesis]
 ```
 
 ## Anti-Patterns

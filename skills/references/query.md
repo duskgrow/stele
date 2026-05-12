@@ -1,16 +1,3 @@
----
-name: stele-query
-version: 1.0.0
-description: |
-  Search, graph traversal, and synthesis from the wiki knowledge base.
-  The primary retrieval skill.
-author: duskgrow
-tags: [stele, query, search, graph, retrieval]
-metadata:
-  hermes:
-    tags: [stele, query, search, graph]
----
-
 # Stele Query — Search + Graph + Synthesis
 
 Retrieve information from the wiki knowledge base. The primary retrieval skill.

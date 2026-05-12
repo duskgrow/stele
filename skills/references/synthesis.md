@@ -1,16 +1,3 @@
----
-name: stele-synthesis
-version: 1.0.0
-description: |
-  Concept synthesis — deduplicate and merge similar wiki pages.
-  Find overlapping content and create unified synthesis pages.
-author: duskgrow
-tags: [stele, synthesis, dedup, merge, consolidation]
-metadata:
-  hermes:
-    tags: [stele, synthesis, dedup]
----
-
 # Stele Synthesis — Concept Dedup + Merge
 
 Find and resolve overlapping wiki pages. Create unified synthesis from scattered content.
@@ -18,7 +5,7 @@ Find and resolve overlapping wiki pages. Create unified synthesis from scattered
 ## When to Use
 
 - Multiple pages cover the same topic from different angles
-- `stele-dream` Stage 8 detects overlap
+- `dream` Stage 8 detects overlap
 - User says "这些页面有重复" / "merge these" / "synthesize"
 - After bulk ingestion that may have created duplicates
 

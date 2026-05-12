@@ -1,17 +1,3 @@
----
-name: stele-migrate
-version: 1.0.0
-description: |
-  Migrate knowledge from other tools (Obsidian, Notion, Logseq, plain markdown)
-  into the Stele wiki. Handles format conversion, link rewriting, and page type
-  inference.
-author: duskgrow
-tags: [stele, migrate, import, obsidian, notion, logseq]
-metadata:
-  hermes:
-    tags: [stele, migrate, import]
----
-
 # Stele Migrate — Import from Other Tools
 
 Migrate knowledge from Obsidian, Notion, Logseq, or plain markdown into the Stele wiki.
@@ -74,7 +60,7 @@ params:
 ### Phase 5: Post-Migration
 
 1. `sync()` to update index
-2. Run `stele-lint` to check for issues
+2. Run `lint` to check for issues
 3. Verify wikilinks are correct
 4. Report: pages migrated, issues found, links broken
 

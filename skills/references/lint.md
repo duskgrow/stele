@@ -1,16 +1,3 @@
----
-name: stele-lint
-version: 1.0.0
-description: |
-  Wiki health check and maintenance. Detects structural issues, orphaned pages,
-  broken links, and content quality problems.
-author: duskgrow
-tags: [stele, lint, maintenance, health-check]
-metadata:
-  hermes:
-    tags: [stele, lint, maintenance]
----
-
 # Stele Lint — Health Check + Maintenance
 
 Periodic health check for the wiki knowledge base.
@@ -109,6 +96,6 @@ Recommended: weekly health check
 
 ```
 Schedule: 0 3 * * 0  (Sunday 3am)
-Prompt: "Run stele-lint on the wiki. Report findings and auto-fix warnings."
-Skills: [stele, stele-lint]
+Prompt: "Run lint on the wiki. Report findings and auto-fix warnings."
+Skills: [stele, lint]
 ```

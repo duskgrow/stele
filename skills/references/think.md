@@ -1,16 +1,3 @@
----
-name: stele-think
-version: 1.0.0
-description: |
-  Multi-round deep research pipeline. Iterative search, graph traversal,
-  and synthesis for complex questions that need multiple passes.
-author: duskgrow
-tags: [stele, think, research, deep-analysis, multi-round]
-metadata:
-  hermes:
-    tags: [stele, think, research]
----
-
 # Stele Think — Multi-Round Deep Research
 
 Deep research pipeline for complex questions. Multiple rounds of search + graph + synthesis with iterative refinement.
@@ -22,9 +9,9 @@ Deep research pipeline for complex questions. Multiple rounds of search + graph 
 - Need to explore multiple angles of a topic
 - Need to trace influence chains or causal paths through the knowledge graph
 
-## How It Differs from stele-query
+## How It Differs from query
 
-| | stele-query | stele-think |
+| | query | think |
 |-|-------------|-------------|
 | Rounds | 1 | Multiple (default 3) |
 | Depth | Surface to moderate | Deep |

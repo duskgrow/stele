@@ -1,17 +1,3 @@
----
-name: stele-signal
-version: 1.0.0
-description: |
-  Always-on ambient signal capture. Fires on every inbound message to detect
-  original thinking and entity mentions. Spawn as a cheap sub-agent in parallel,
-  never block the main response.
-author: duskgrow
-tags: [stele, signal, ambient, always-on, entity-detection]
-metadata:
-  hermes:
-    tags: [stele, signal, ambient, always-on]
----
-
 # Signal Detector — Ambient Wiki Capture
 
 Lightweight sub-agent that fires on every inbound message to capture TWO things with EQUAL priority:

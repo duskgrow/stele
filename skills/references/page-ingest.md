@@ -1,16 +1,3 @@
----
-name: stele-page-ingest
-version: 1.0.0
-description: |
-  Ingest URLs, documents, conversations, and raw text into structured wiki pages.
-  The core ingestion workhorse.
-author: duskgrow
-tags: [stele, ingest, page, compilation]
-metadata:
-  hermes:
-    tags: [stele, ingest, page]
----
-
 # Stele Page Ingest — Content → Wiki Pages
 
 Compile raw materials into structured wiki pages. This is the core ingestion workhorse.
@@ -21,7 +8,7 @@ Compile raw materials into structured wiki pages. This is the core ingestion wor
 - User shares a document or PDF
 - User shares a conversation transcript
 - User shares raw text or an idea
-- `stele-ingest` routes here for page-type content
+- `ingest` routes here for page-type content
 
 ## Workflow
 

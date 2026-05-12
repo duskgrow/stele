@@ -1,25 +1,12 @@
----
-name: stele-enrich
-version: 1.0.0
-description: |
-  Entity enrichment pipeline. Takes an existing wiki page and fills it with
-  external data research. Tiered approach based on entity importance.
-author: duskgrow
-tags: [stele, enrich, entity, research, external-data]
-metadata:
-  hermes:
-    tags: [stele, enrich, entity]
----
-
 # Stele Enrich — Entity Enrichment Pipeline
 
 Take an existing wiki entity page and enrich it with external data research.
 
 ## When to Use
 
-- `stele-signal` detects an entity worth enriching
+- `signal-detector` detects an entity worth enriching
 - User says "enrich this page" / "研究一下这个实体"
-- `stele-dream` triggers enrichment for stale entity pages
+- `dream` triggers enrichment for stale entity pages
 - After initial ingestion, entity pages need deeper content
 
 ## Enrichment Tiers

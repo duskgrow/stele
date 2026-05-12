@@ -1,16 +1,3 @@
----
-name: stele-setup
-version: 1.0.0
-description: |
-  First-time setup for the Stele knowledge base. Initialize wiki structure,
-  verify MCP connectivity, create initial pages.
-author: duskgrow
-tags: [stele, setup, initialization, first-run]
-metadata:
-  hermes:
-    tags: [stele, setup, initialization]
----
-
 # Stele Setup — First-Time Initialization
 
 Set up the Stele knowledge base from scratch.
@@ -83,7 +70,7 @@ params:
     - [[comparisons/]] — Structured comparisons
 
     ## Recent Activity
-    (auto-populated by stele-dream)
+    (auto-populated by dream)
   frontmatter:
     title: "Wiki Index"
     page_type: "Concept"
@@ -114,6 +101,6 @@ MCP endpoint: localhost:9002/mcp
 Index: healthy
 
 Next steps:
-1. Start ingesting content with stele-ingest
-2. Set up stele-dream cron for automated maintenance
+1. Start ingesting content with ingest
+2. Set up dream cron for automated maintenance
 3. Configure always_load_skills in Hermes config

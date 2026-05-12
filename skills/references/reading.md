@@ -1,16 +1,3 @@
----
-name: stele-reading
-version: 1.0.0
-description: |
-  Strategic reading — read a book, article, or case study through the lens
-  of a specific problem, then compile structured pages from the insights.
-author: duskgrow
-tags: [stele, reading, book, article, strategic, compilation]
-metadata:
-  hermes:
-    tags: [stele, reading, book]
----
-
 # Stele Reading — Strategic Reading → Wiki Pages
 
 Read a book, article, or case study through the lens of a specific problem. Produce structured wiki pages from the insights.
@@ -21,9 +8,9 @@ Read a book, article, or case study through the lens of a specific problem. Prod
 - Long-form content that needs systematic extraction
 - Content where the user wants to extract actionable insights, not just facts
 
-## How It Differs from stele-page-ingest
+## How It Differs from page-ingest
 
-| | stele-page-ingest | stele-reading |
+| | page-ingest | reading |
 |-|-------------------|---------------|
 | Depth | Surface compilation | Deep strategic analysis |
 | Input | URL, doc, conversation | Book, long article, case study |

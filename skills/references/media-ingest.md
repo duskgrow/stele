@@ -1,16 +1,3 @@
----
-name: stele-media-ingest
-version: 1.0.0
-description: |
-  Ingest video, audio, PDF, screenshot, and repo content into wiki pages.
-  Handles transcription, OCR, and content extraction before compilation.
-author: duskgrow
-tags: [stele, ingest, media, video, audio, pdf, screenshot]
-metadata:
-  hermes:
-    tags: [stele, ingest, media]
----
-
 # Stele Media Ingest — Media → Wiki Pages
 
 Ingest media content (video, audio, PDF, screenshots, repos) into structured wiki pages.
@@ -22,12 +9,12 @@ Ingest media content (video, audio, PDF, screenshots, repos) into structured wik
 - User shares a PDF document
 - User shares a screenshot/image
 - User shares a GitHub repo link
-- `stele-ingest` routes here for media-type content
+- `ingest` routes here for media-type content
 
 ## Content Type Handling
 
 ### Video (YouTube, etc.)
-1. Fetch transcript (use `youtube-content` skill or equivalent)
+1. Fetch transcript (use Tavily extract, web search, or transcript API)
 2. If no transcript: summarize from description + metadata
 3. Extract key points, entities, concepts
 4. Compile into `sources/` page + related entity/concept pages
@@ -38,7 +25,7 @@ Ingest media content (video, audio, PDF, screenshots, repos) into structured wik
 3. Compile into `sources/` page + related pages
 
 ### PDF / Document
-1. Extract text (use `ocr-and-documents` skill or equivalent)
+1. Extract text (use vision tools or PDF extraction utilities)
 2. Analyze structure (headers, sections, tables)
 3. Extract key content per section
 4. Compile into appropriate pages
@@ -58,7 +45,7 @@ Ingest media content (video, audio, PDF, screenshots, repos) into structured wik
 ```
 Media content
   → Extract text/transcript
-  → Analyze (same as stele-page-ingest Phase 2-5)
+  → Analyze (same as page-ingest Phase 2-5)
   → Generate pages
   → Write & link
   → sync()

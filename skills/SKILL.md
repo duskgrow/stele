@@ -1,6 +1,6 @@
 ---
 name: stele
-version: 1.0.0
+version: 2.0.0
 description: |
   Always-on wiki behavior layer. Wiki-first lookup, back-linking, source attribution,
   ambient enrichment routing. The core read/write cycle for the Stele knowledge base.
@@ -18,15 +18,12 @@ metadata:
 
 The wiki is not an archive. It is a live context membrane that every interaction flows through in both directions.
 
-> **Convention:** See `references/wiki-first.md` for the 5-step lookup protocol.
-> **Convention:** See `references/quality.md` for citation and back-link rules.
-> **Convention:** See `references/filing-rules.md` for directory conventions.
-
-**Source code:** `/share/code/stele/`
-**MCP endpoint:** `localhost:9002/mcp`
-**FNS backend:** port 9000 (Docker, JWT auth)
-**Config:** `~/.config/stele/config.toml` or `STELE_*` env vars
-**Index:** `~/.local/share/stele/index.db`
+> **Routing:** See `ROUTING.md` for skill dispatch rules (always-on + on-demand).
+> **Conventions:** See `references/` for cross-cutting rules (apply to ALL operations):
+>   - `references/wiki-first.md` — mandatory lookup protocol
+>   - `references/quality.md` — citation, back-linking, notability rules
+>   - `references/test-before-bulk.md` — batch operation safety
+> **Filing:** See `references/filing-rules.md` for directory and slug conventions.
 
 ## Contract
 
@@ -159,38 +156,15 @@ Don't answer from general knowledge when a wiki page exists with better informat
 
 This is not a special mode. This is the default. Everything the user says is a potential wiki event.
 
-- Entity mentioned → check wiki, create/enrich if needed (delegate to `stele-signal`)
-- Link shared → ingest it (delegate to `stele-ingest`)
-- Data shared → delegate to appropriate skill
-- Idea expressed → capture it (delegate to `stele-signal`)
+- Entity mentioned → check wiki, create/enrich if needed (load `references/signal-detector.md`)
+- Link shared → ingest it (load `references/ingest.md`)
+- Data shared → load appropriate reference from `ROUTING.md`
+- Idea expressed → capture it (load `references/signal-detector.md`)
 
 **Rules:**
 - Never interrupt the conversation to do enrichment
 - Spawn sub-agents for anything that would slow down the response
 - Never announce "I'm enriching the wiki" — just do it silently
-
-## Routing — Which Skill to Use
-
-| Trigger | Skill | Description |
-|---------|-------|-------------|
-| Every message (always-on) | `stele-signal` | Detect entities + ideas, silently enrich |
-| "记录"/"摄入"/shared URL/文档 | `stele-ingest` | Route to specialized ingestion skill |
-| Question about wiki content | `stele-query` | Search + graph + synthesis |
-| "lint"/"health check" | `stele-lint` | Health check + maintenance |
-| Entity needs external data | `stele-enrich` | Tiered enrichment pipeline |
-| "深度分析"/"深入研究" | `stele-think` | Multi-round deep research |
-| "dream"/cron trigger | `stele-dream` | Scheduled 11-stage maintenance |
-| Read a book/article deeply | `stele-reading` | Strategic reading → structured pages |
-| Merge similar concepts | `stele-synthesis` | Concept dedup + synthesis |
-| First-time setup | `stele-setup` | Initialize wiki structure |
-| Migrate from Obsidian/Notion | `stele-migrate` | Import from other tools |
-| Unclear | Ask user | Don't guess |
-
-**Chain rules:**
-- `stele-ingest` completes → auto `sync()`
-- `stele-query` returns nothing → suggest `stele-ingest`
-- `stele-think` internally uses `stele-query` capabilities
-- `stele-dream` internally uses `stele-lint` + `stele-query` + `stele-think`
 
 ## Operational Notes
 
