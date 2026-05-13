@@ -127,9 +127,6 @@ mod tests {
 
     #[test]
     fn result_type_alias() {
-        let ok: Result<i32> = Ok(42);
-        assert_eq!(ok.unwrap(), 42);
-
         let err: Result<i32> = Err(Error::NotFound("test".to_string()));
         assert!(err.is_err());
     }
@@ -139,7 +136,7 @@ mod tests {
         let variants = vec![
             Error::NotFound("page".to_string()),
             Error::Conflict("exists".to_string()),
-            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "io")),
+            Error::Io(std::io::Error::other("io")),
             Error::Storage("db".to_string()),
             Error::Parse("bad".to_string()),
             Error::Config("missing".to_string()),

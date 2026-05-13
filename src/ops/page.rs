@@ -68,7 +68,9 @@ pub async fn handle_page_put(
     let page = match fns.get_note(&fns_path).await {
         Ok(existing_content) => {
             let mut existing = page_parser::parse_page(&existing_content, &slug)?;
-            let updates = frontmatter_updates.cloned().unwrap_or(Value::Object(Default::default()));
+            let updates = frontmatter_updates
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
             existing.frontmatter = frontmatter::merge_frontmatter(&existing.frontmatter, &updates)?;
             existing.compiled_truth = body.to_string();
             existing.timeline.push(new_entry);
@@ -149,15 +151,9 @@ pub async fn handle_page_delete(
     }))
 }
 
-pub async fn handle_page_list(
-    fns: &FnsClient,
-    dir: Option<&str>,
-) -> Result<serde_json::Value> {
+pub async fn handle_page_list(fns: &FnsClient, dir: Option<&str>) -> Result<serde_json::Value> {
     let dir = dir.unwrap_or(".");
-    let (files, folders) = tokio::join!(
-        fns.list_notes(dir),
-        fns.list_folders(dir),
-    );
+    let (files, folders) = tokio::join!(fns.list_notes(dir), fns.list_folders(dir),);
 
     let files = files?;
     let folders = folders?;
@@ -287,7 +283,10 @@ mod tests {
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
         assert!(result["frontmatter"].is_object());
-        assert_eq!(result["frontmatter"]["title"].as_str().unwrap(), "Test Page");
+        assert_eq!(
+            result["frontmatter"]["title"].as_str().unwrap(),
+            "Test Page"
+        );
         assert!(result["body"].is_string());
         assert!(result["timeline"].is_array());
         assert_eq!(result["timeline"].as_array().unwrap().len(), 1);
@@ -328,7 +327,10 @@ mod tests {
         assert_eq!(tags[0].as_str().unwrap(), "rust");
         assert_eq!(tags[1].as_str().unwrap(), "test");
 
-        assert_eq!(result["body"].as_str().unwrap(), "This is the compiled truth.");
+        assert_eq!(
+            result["body"].as_str().unwrap(),
+            "This is the compiled truth."
+        );
 
         let timeline = result["timeline"].as_array().unwrap();
         assert_eq!(timeline.len(), 2);
@@ -338,7 +340,10 @@ mod tests {
         assert_eq!(timeline[0]["source_url"], Value::Null);
         assert_eq!(timeline[1]["date"].as_str().unwrap(), "2024-06-15");
         assert_eq!(timeline[1]["content"].as_str().unwrap(), "Second entry");
-        assert_eq!(timeline[1]["source_url"].as_str().unwrap(), "https://source.com");
+        assert_eq!(
+            timeline[1]["source_url"].as_str().unwrap(),
+            "https://source.com"
+        );
         assert_eq!(timeline[1]["agent"], Value::Null);
 
         assert!(result["content_hash"].as_str().is_some());
@@ -393,7 +398,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::NotFound(msg) => {
-                assert!(msg.contains("not found") || msg.contains("Note does not exist"), "expected not found message, got: {msg}");
+                assert!(
+                    msg.contains("not found") || msg.contains("Note does not exist"),
+                    "expected not found message, got: {msg}"
+                );
             }
             other => panic!("expected NotFound error, got {:?}", other),
         }
@@ -438,7 +446,7 @@ mod tests {
         .expect("put should succeed");
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
-        assert_eq!(result["indexed"].as_bool().unwrap(), true);
+        assert!(result["indexed"].as_bool().unwrap());
 
         let page = index.get_page(slug).await.expect("get_page should succeed");
         assert!(page.is_some());
@@ -494,7 +502,9 @@ mod tests {
 
         assert_eq!(result["links_count"].as_u64().unwrap(), 2);
 
-        let outgoing = graph::get_outlinks(index.pool(), slug, None).await.expect("get_outlinks should succeed");
+        let outgoing = graph::get_outlinks(index.pool(), slug, None)
+            .await
+            .expect("get_outlinks should succeed");
         assert_eq!(outgoing.len(), 2);
 
         let target_slugs: Vec<&str> = outgoing.iter().map(|l| l.target_slug.as_str()).collect();
@@ -559,7 +569,7 @@ mod tests {
             .expect("delete should succeed");
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
-        assert_eq!(result["deleted"].as_bool().unwrap(), true);
+        assert!(result["deleted"].as_bool().unwrap());
         assert!(index.get_page(slug).await.unwrap().is_none());
     }
 
@@ -600,7 +610,7 @@ mod tests {
         )
         .await
         .expect("first put should succeed");
-        assert_eq!(first["indexed"].as_bool().unwrap(), true);
+        assert!(first["indexed"].as_bool().unwrap());
 
         let wrong_etag = "wrong-etag-hash";
         let result = handle_page_put(
@@ -859,7 +869,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("frontmatter is required"), "expected frontmatter error, got: {err}");
+        assert!(
+            err.contains("frontmatter is required"),
+            "expected frontmatter error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -889,7 +902,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("title is required"), "expected title error, got: {err}");
+        assert!(
+            err.contains("title is required"),
+            "expected title error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -919,7 +935,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("title must not be empty"), "expected empty title error, got: {err}");
+        assert!(
+            err.contains("title must not be empty"),
+            "expected empty title error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1010,17 +1029,9 @@ mod tests {
             agent: None,
         };
 
-        let result = handle_page_put(
-            &fns,
-            &index,
-            slug,
-            "New body only.\n",
-            None,
-            timeline,
-            None,
-        )
-        .await
-        .expect("put should succeed");
+        let result = handle_page_put(&fns, &index, slug, "New body only.\n", None, timeline, None)
+            .await
+            .expect("put should succeed");
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
         assert_eq!(result["timeline_count"].as_u64().unwrap(), 2);

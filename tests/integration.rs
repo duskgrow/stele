@@ -185,7 +185,7 @@ async fn test_tools_list_returns_all_operations() {
     let reg = test_registry(&server.uri()).await;
 
     let ops = reg.list_operations();
-    assert_eq!(ops.len(), 11);
+    assert_eq!(ops.len(), 10);
 
     let names: Vec<&str> = ops.iter().map(|o| o.name.as_str()).collect();
     assert!(names.contains(&"page.get"));
@@ -194,7 +194,6 @@ async fn test_tools_list_returns_all_operations() {
     assert!(names.contains(&"page.list"));
     assert!(names.contains(&"search"));
     assert!(names.contains(&"graph.query"));
-    assert!(names.contains(&"graph.backlinks"));
     assert!(names.contains(&"sync"));
     assert!(names.contains(&"maintain"));
     assert!(names.contains(&"stats"));
@@ -273,11 +272,11 @@ async fn test_page_put_extracts_wikilinks() {
     assert!(put_result["links_count"].as_u64().unwrap() >= 1);
 
     let backlinks = reg
-        .execute_mcp("graph.backlinks", Some(json!({"slug": "target-page"}).as_object().cloned().unwrap()))
+        .execute_mcp("graph.query", Some(json!({"slug": "target-page", "direction": "in"}).as_object().cloned().unwrap()))
         .await
-        .expect("backlinks should succeed");
-    assert!(backlinks["count"].as_u64().unwrap() >= 1);
-    let sources: Vec<&str> = backlinks["backlinks"]
+        .expect("graph.query should succeed");
+    assert!(!backlinks["outlinks"].as_array().unwrap().is_empty());
+    let sources: Vec<&str> = backlinks["outlinks"]
         .as_array()
         .unwrap()
         .iter()
@@ -429,52 +428,6 @@ async fn test_graph_query_returns_outlinks() {
         .map(|l| l["target_slug"].as_str().unwrap())
         .collect();
     assert!(targets.contains(&"page-b"));
-}
-
-#[tokio::test]
-async fn test_graph_backlinks() {
-    let server = MockServer::start().await;
-    let index = test_index().await;
-
-    let md_a = sample_markdown_with_link("target");
-    let page_a = stele::parser::page::parse_page(&md_a, "page-a").unwrap();
-    index.index_page(&page_a).await.unwrap();
-
-    let md_b = "---\ntitle: Page B\npage_type: Entity\ntags: []\nsources: []\n---\nAlso links to [[target]].\n";
-    let page_b = stele::parser::page::parse_page(md_b, "page-b").unwrap();
-    index.index_page(&page_b).await.unwrap();
-
-    let md_target = sample_markdown("Target", "Target content.");
-    let page_target = stele::parser::page::parse_page(&md_target, "target").unwrap();
-    index.index_page(&page_target).await.unwrap();
-
-    let links_a = stele::parser::wikilink::extract_links_for_page(&page_a.compiled_truth, "page-a");
-    index.update_links("page-a", &links_a).await.unwrap();
-    let links_b = stele::parser::wikilink::extract_links_for_page(&page_b.compiled_truth, "page-b");
-    index.update_links("page-b", &links_b).await.unwrap();
-
-    let fns = Arc::new(FnsClient::new(
-        server.uri(),
-        "test-token".into(),
-        "test-vault".into(),
-    ));
-    let config = test_config(&server.uri());
-    let reg = OperationRegistry::new(fns, Arc::new(index), config);
-
-    let result = reg
-        .execute_mcp("graph.backlinks", Some(json!({"slug": "target"}).as_object().cloned().unwrap()))
-        .await
-        .expect("backlinks should succeed");
-
-    assert_eq!(result["count"], 2);
-    let sources: Vec<&str> = result["backlinks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|b| b["source_slug"].as_str().unwrap())
-        .collect();
-    assert!(sources.contains(&"page-a"));
-    assert!(sources.contains(&"page-b"));
 }
 
 #[tokio::test]

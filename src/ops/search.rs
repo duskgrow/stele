@@ -12,7 +12,8 @@ pub async fn handle_search(
     sort: Option<&str>,
 ) -> Result<serde_json::Value> {
     let limit_val = limit.unwrap_or(10);
-    let results = keyword::keyword_search(index.pool(), query, limit_val, type_filter, sort).await?;
+    let results =
+        keyword::keyword_search(index.pool(), query, limit_val, type_filter, sort).await?;
 
     let results_json: Vec<serde_json::Value> = results
         .iter()
@@ -54,7 +55,8 @@ pub async fn handle_graph_query(
         _ => graph::get_outlinks(index.pool(), slug, link_type).await?,
     };
 
-    let neighbors = graph::get_neighbors(index.pool(), slug, depth_val, link_type, direction).await?;
+    let neighbors =
+        graph::get_neighbors(index.pool(), slug, depth_val, link_type, direction).await?;
 
     let outlinks_json: Vec<serde_json::Value> = direct_links
         .iter()
@@ -82,32 +84,6 @@ pub async fn handle_graph_query(
         "slug": slug,
         "outlinks": outlinks_json,
         "neighbors": neighbors_json
-    }))
-}
-
-pub async fn handle_graph_backlinks(
-    index: &IndexEngine,
-    slug: &str,
-) -> Result<serde_json::Value> {
-    let backlinks = graph::get_backlinks(index.pool(), slug, None).await?;
-    let count = backlinks.len();
-
-    let backlinks_json: Vec<serde_json::Value> = backlinks
-        .iter()
-        .map(|link| {
-            json!({
-                "source_slug": link.source_slug,
-                "target_slug": link.target_slug,
-                "link_type": format!("{:?}", link.link_type),
-                "context_snippet": link.context_snippet
-            })
-        })
-        .collect();
-
-    Ok(json!({
-        "slug": slug,
-        "backlinks": backlinks_json,
-        "count": count
     }))
 }
 
@@ -229,7 +205,7 @@ mod tests {
         engine.index_page(&page_b).await.unwrap();
         engine.index_page(&page_c).await.unwrap();
 
-        let links = vec![
+        let links = [
             Link {
                 source_slug: "page-b".to_string(),
                 target_slug: "page-a".to_string(),
@@ -293,53 +269,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_graph_backlinks() {
-        let engine = IndexEngine::new(":memory:").await.unwrap();
-
-        let page_a = sample_page("page-a", "Page A", PageType::Entity, "A content");
-        let page_b = sample_page("page-b", "Page B", PageType::Concept, "B content");
-        let page_c = sample_page("page-c", "Page C", PageType::Source, "C content");
-
-        engine.index_page(&page_a).await.unwrap();
-        engine.index_page(&page_b).await.unwrap();
-        engine.index_page(&page_c).await.unwrap();
-
-        let links = vec![
-            Link {
-                source_slug: "page-a".to_string(),
-                target_slug: "page-b".to_string(),
-                link_type: LinkType::Plain,
-                context_snippet: None,
-            },
-            Link {
-                source_slug: "page-c".to_string(),
-                target_slug: "page-b".to_string(),
-                link_type: LinkType::Custom("references".to_string()),
-                context_snippet: None,
-            },
-        ];
-        engine.update_links("page-a", &links[0..1]).await.unwrap();
-        engine.update_links("page-c", &links[1..2]).await.unwrap();
-
-        let result = handle_graph_backlinks(&engine, "page-b")
-            .await
-            .unwrap();
-
-        assert_eq!(result["slug"], "page-b");
-        assert_eq!(result["count"], 2);
-        assert_eq!(result["backlinks"].as_array().unwrap().len(), 2);
-
-        let source_slugs: Vec<String> = result["backlinks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v["source_slug"].as_str().unwrap().to_string())
-            .collect();
-        assert!(source_slugs.contains(&"page-a".to_string()));
-        assert!(source_slugs.contains(&"page-c".to_string()));
-    }
-
-    #[tokio::test]
     async fn test_stats() {
         let engine = IndexEngine::new(":memory:").await.unwrap();
 
@@ -371,13 +300,7 @@ mod tests {
 
         assert_eq!(result["total_pages"], 3);
         assert_eq!(result["total_links"], 2);
-        assert_eq!(
-            result["pages_by_type"]["Entity"].as_i64(),
-            Some(1)
-        );
-        assert_eq!(
-            result["pages_by_type"]["Concept"].as_i64(),
-            Some(2)
-        );
+        assert_eq!(result["pages_by_type"]["Entity"].as_i64(), Some(1));
+        assert_eq!(result["pages_by_type"]["Concept"].as_i64(), Some(2));
     }
 }

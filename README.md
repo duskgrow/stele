@@ -67,7 +67,9 @@ stele page list [dir]
 stele search <query> [--limit N] [--type-filter TYPE]
 
 # Graph queries
-stele graph <slug> [--depth N]
+stele graph query <slug> [--depth N] [--direction in|out|both]
+
+> **Note**: `graph.backlinks` has been removed. Use `stele graph query <slug> --direction in` instead.
 
 # Sync from FNS vault
 stele sync [--dir /notes]
@@ -97,7 +99,7 @@ Add to your Claude Desktop config (`~/.config/claude/config.json`):
 }
 ```
 
-Available MCP tools: `page.get`, `page.put`, `page.delete`, `page.list`, `search`, `graph.query`, `graph.backlinks`, `sync`, `maintain`, `stats`, `reindex`.
+Available MCP tools: `page.get`, `page.put`, `page.delete`, `page.list`, `search`, `graph.query`, `sync`, `maintain`, `stats`, `reindex`.
 
 ## Configuration Reference
 

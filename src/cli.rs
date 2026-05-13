@@ -31,15 +31,7 @@ pub(crate) fn build_cli() -> Command {
                 .arg(Arg::new("host").long("host").default_value("127.0.0.1"))
                 .arg(Arg::new("port").long("port").value_parser(clap::value_parser!(u16)).default_value("3000"))
         )
-        .subcommand(
-            Command::new("skill")
-                .about("Skill management")
-                .subcommand(
-                    Command::new("install")
-                        .about("Install skills to target directory")
-                        .arg(Arg::new("target").long("target").default_value("~/.hermes/skills/"))
-                )
-        );
+        ;
 
     for (prefix, handlers) in &groups {
         let mut parent = Command::new(*prefix).about(format!("{} operations", prefix));
@@ -78,22 +70,6 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
                 crate::mcp::stdio::run_stdio(registry).await
             } else {
                 crate::mcp::http::run_http(registry, host, port).await
-            }
-        }
-        Some(("skill", skill_matches)) => {
-            match skill_matches.subcommand() {
-                Some(("install", install_matches)) => {
-                    let target = install_matches.get_one::<String>("target").unwrap();
-                    let target_path = crate::skills::expand_tilde(target)?;
-                    crate::skills::install_skills(&target_path)?;
-                    let result = json!({"status": "ok", "target": target_path.to_string_lossy()});
-                    println!("{}", serde_json::to_string_pretty(&result)?);
-                    Ok(())
-                }
-                _ => {
-                    eprintln!("No skill subcommand specified. Use --help for usage.");
-                    std::process::exit(1);
-                }
             }
         }
         Some((name, sub_matches)) => {
@@ -196,40 +172,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parses_skill_install() {
-        let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(["stele", "skill", "install", "--target", "/tmp/test"]).unwrap();
-        match matches.subcommand() {
-            Some(("skill", skill_matches)) => {
-                match skill_matches.subcommand() {
-                    Some(("install", install_matches)) => {
-                        assert_eq!(install_matches.get_one::<String>("target").unwrap(), "/tmp/test");
-                    }
-                    other => panic!("expected install, got {:?}", other),
-                }
-            }
-            other => panic!("expected skill, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cli_parses_skill_install_defaults() {
-        let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(["stele", "skill", "install"]).unwrap();
-        match matches.subcommand() {
-            Some(("skill", skill_matches)) => {
-                match skill_matches.subcommand() {
-                    Some(("install", install_matches)) => {
-                        assert_eq!(install_matches.get_one::<String>("target").unwrap(), "~/.hermes/skills/");
-                    }
-                    other => panic!("expected install, got {:?}", other),
-                }
-            }
-            other => panic!("expected skill, got {:?}", other),
-        }
-    }
-
-    #[test]
     fn test_cli_help_shows_all_ops() {
         let mut cmd = build_cli();
         let mut buf = Vec::new();
@@ -237,7 +179,6 @@ mod tests {
         let help = String::from_utf8(buf).unwrap();
 
         assert!(help.contains("serve"), "help should contain 'serve'");
-        assert!(help.contains("skill"), "help should contain 'skill'");
         assert!(help.contains("page"), "help should contain 'page'");
         assert!(help.contains("search"), "help should contain 'search'");
         assert!(help.contains("stats"), "help should contain 'stats'");

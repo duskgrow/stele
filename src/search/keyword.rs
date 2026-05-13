@@ -458,7 +458,7 @@ mod tests {
     async fn test_preview_truncation() {
         let pool = setup_test_db().await;
         let long_content = "word ".repeat(100);
-        let page = sample_page("long", "Long Page", PageType::Concept, &long_content.trim());
+        let page = sample_page("long", "Long Page", PageType::Concept, long_content.trim());
         index_page(&pool, &page).await;
 
         let results = keyword_search(&pool, "word", 10, None, None).await.unwrap();

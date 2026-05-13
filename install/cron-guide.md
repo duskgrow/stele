@@ -288,7 +288,7 @@ Run when new raw materials arrive:
 
 ```bash
 # Ingest after receiving a document or URL
-stele skill install && hermes --skill stele-ingest
+hermes --skill stele-ingest
 ```
 
 Or trigger through your MCP client (Claude Desktop, etc.) by invoking the `stele-ingest` skill.
@@ -298,7 +298,7 @@ Or trigger through your MCP client (Claude Desktop, etc.) by invoking the `stele
 Run when you have a question about wiki content:
 
 ```bash
-stele skill install && hermes --skill stele-query
+hermes --skill stele-query
 ```
 
 Or trigger through your MCP client.

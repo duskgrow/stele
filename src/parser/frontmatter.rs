@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_unicode_in_title_and_body() {
         let raw = "---\ntitle: \u{6d4b}\u{8bd5}\n---\n\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n";
-        let (fm, body) = parse(&raw).unwrap();
+        let (fm, body) = parse(raw).unwrap();
         assert_eq!(fm.title, "\u{6d4b}\u{8bd5}");
         assert_eq!(body, "\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n");
     }

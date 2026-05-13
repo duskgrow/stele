@@ -103,7 +103,7 @@ mod tests {
     async fn test_all_ops_have_meta() {
         let reg = test_registry().await;
         let metas = reg.list_operations();
-        assert_eq!(metas.len(), 11, "expected 11 operations, got {}", metas.len());
+        assert_eq!(metas.len(), 10, "expected 10 operations, got {}", metas.len());
 
         for meta in &metas {
             assert!(!meta.name.is_empty(), "operation name must not be empty");
@@ -258,10 +258,6 @@ mod tests {
         let args = serde_json::json!({"slug": "test", "depth": 1});
         let graph_q = reg.execute_mcp("graph.query", Some(serde_json::from_value(args).unwrap())).await;
         assert!(graph_q.is_ok(), "graph.query failed: {:?}", graph_q.err());
-
-        let args = serde_json::json!({"slug": "test"});
-        let graph_bl = reg.execute_mcp("graph.backlinks", Some(serde_json::from_value(args).unwrap())).await;
-        assert!(graph_bl.is_ok(), "graph.backlinks failed: {:?}", graph_bl.err());
 
         let sync = reg.execute_mcp("sync", None).await;
         assert!(sync.is_ok(), "sync failed: {:?}", sync.err());

@@ -6,9 +6,8 @@ use std::sync::Arc;
 use rmcp::{
     ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ErrorData, JsonObject,
-        ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo,
-        Tool,
+        CallToolRequestParams, CallToolResult, Content, ErrorData, JsonObject, ListToolsResult,
+        PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
 };
@@ -67,7 +66,10 @@ impl ServerHandler for SteleMcpServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResult, ErrorData> {
-        let result = self.registry.execute_mcp(&request.name, request.arguments).await;
+        let result = self
+            .registry
+            .execute_mcp(&request.name, request.arguments)
+            .await;
         match result {
             Ok(value) => Ok(CallToolResult::structured(value)),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
@@ -86,7 +88,7 @@ mod tests {
         let metas = registry.list_operations();
         let tools: Vec<Tool> = metas.iter().map(SteleMcpServer::meta_to_tool).collect();
 
-        assert_eq!(tools.len(), 11, "expected 11 tools, got {}", tools.len());
+        assert_eq!(tools.len(), 10, "expected 10 tools, got {}", tools.len());
 
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
         assert!(names.contains(&"page.get".to_string()));
@@ -95,7 +97,6 @@ mod tests {
         assert!(names.contains(&"page.list".to_string()));
         assert!(names.contains(&"search".to_string()));
         assert!(names.contains(&"graph.query".to_string()));
-        assert!(names.contains(&"graph.backlinks".to_string()));
         assert!(names.contains(&"sync".to_string()));
         assert!(names.contains(&"maintain".to_string()));
         assert!(names.contains(&"stats".to_string()));
@@ -104,7 +105,7 @@ mod tests {
         for tool in &tools {
             assert!(!tool.name.is_empty(), "tool name must not be empty");
             assert!(
-                tool.description.as_ref().map_or(false, |d| !d.is_empty()),
+                tool.description.as_ref().is_some_and(|d| !d.is_empty()),
                 "tool '{}' description must not be empty",
                 tool.name
             );
@@ -154,7 +155,11 @@ mod tests {
         assert!(value.get("total_pages").is_some());
 
         let result = registry.execute_mcp("reindex", None).await;
-        assert!(result.is_ok(), "reindex dispatch failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "reindex dispatch failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap()["reindexed"].as_bool(), Some(true));
 
         let result = registry.execute_mcp("unknown.tool", None).await;
