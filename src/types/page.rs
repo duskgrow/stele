@@ -55,6 +55,17 @@ impl std::fmt::Display for PageType {
     }
 }
 
+impl PageType {
+    pub const NAMES: &'static [&'static str] = &[
+        "Entity",
+        "Concept",
+        "Source",
+        "Query",
+        "Synthesis",
+        "Comparison",
+    ];
+}
+
 /// A single dated entry in a page's timeline section.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimelineEntry {
