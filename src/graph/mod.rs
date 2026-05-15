@@ -2,50 +2,59 @@ use crate::types::{Error, Link, LinkType, Result};
 use sqlx::SqlitePool;
 use std::collections::{HashSet, VecDeque};
 
-/// Get all outgoing links from a page, optionally filtered by link type.
-pub async fn get_outlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+pub(crate) enum LinkDirection {
+    In,
+    Out,
+}
+
+pub(crate) async fn query_links(
+    db: &SqlitePool,
+    slug: &str,
+    direction: LinkDirection,
+    link_type: Option<&str>,
+) -> Result<Vec<Link>> {
+    let (where_clause, err_label) = match direction {
+        LinkDirection::Out => ("source_slug = ?1", "get_outlinks"),
+        LinkDirection::In => ("target_slug = ?1", "get_backlinks"),
+    };
+
     let rows: Vec<(String, String, String, Option<String>)> = match link_type {
-        Some(lt) => sqlx::query_as(
-            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1 AND link_type = ?2",
-        )
-        .bind(slug)
-        .bind(lt)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?,
-        None => sqlx::query_as(
-            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE source_slug = ?1",
-        )
-        .bind(slug)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Storage(format!("get_outlinks: {e}")))?,
+        Some(lt) => {
+            let sql = format!(
+                "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE {} AND link_type = ?2",
+                where_clause
+            );
+            sqlx::query_as(&sql)
+                .bind(slug)
+                .bind(lt)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Storage(format!("{err_label}: {e}")))?
+        }
+        None => {
+            let sql = format!(
+                "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE {}",
+                where_clause
+            );
+            sqlx::query_as(&sql)
+                .bind(slug)
+                .fetch_all(db)
+                .await
+                .map_err(|e| Error::Storage(format!("{err_label}: {e}")))?
+        }
     };
 
     Ok(rows.into_iter().map(parse_link_row).collect())
 }
 
+/// Get all outgoing links from a page, optionally filtered by link type.
+pub async fn get_outlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+    query_links(db, slug, LinkDirection::Out, link_type).await
+}
+
 /// Get all incoming links to a page, optionally filtered by link type.
 pub async fn get_backlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
-    let rows: Vec<(String, String, String, Option<String>)> = match link_type {
-        Some(lt) => sqlx::query_as(
-            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1 AND link_type = ?2",
-        )
-        .bind(slug)
-        .bind(lt)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?,
-        None => sqlx::query_as(
-            "SELECT source_slug, target_slug, link_type, context_snippet FROM links WHERE target_slug = ?1",
-        )
-        .bind(slug)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Storage(format!("get_backlinks: {e}")))?,
-    };
-
-    Ok(rows.into_iter().map(parse_link_row).collect())
+    query_links(db, slug, LinkDirection::In, link_type).await
 }
 
 /// BFS traversal from a starting page, returning (slug, distance) pairs.
