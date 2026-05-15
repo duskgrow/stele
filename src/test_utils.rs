@@ -13,6 +13,36 @@ use crate::ops::registry::OperationRegistry;
 use crate::types::{Frontmatter, Page, PageType, TimelineEntry};
 
 #[cfg(test)]
+pub(crate) const TEST_SCHEMA: &str = r#"
+    CREATE TABLE IF NOT EXISTS pages (
+        slug TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        page_type TEXT NOT NULL DEFAULT '',
+        vault TEXT NOT NULL DEFAULT '',
+        content_hash TEXT NOT NULL DEFAULT '',
+        compiled_truth TEXT NOT NULL DEFAULT '',
+        raw_content TEXT NOT NULL DEFAULT '',
+        timeline_json TEXT NOT NULL DEFAULT '',
+        timeline_text TEXT NOT NULL DEFAULT '',
+        frontmatter_json TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS links (
+        source_slug TEXT NOT NULL,
+        target_slug TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        context_snippet TEXT,
+        UNIQUE(source_slug, target_slug, link_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_slug);
+    CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_slug);
+"#;
+
+#[cfg(test)]
 pub fn sample_page(slug: &str, title: &str, page_type: PageType, content: &str) -> Page {
     Page {
         slug: slug.to_string(),
@@ -48,7 +78,7 @@ pub async fn test_registry() -> OperationRegistry {
         "http://localhost".into(),
         "test-token".into(),
         "test-vault".into(),
-    ));
+    ).unwrap());
     let index = Arc::new(
         IndexEngine::new("sqlite::memory:")
             .await

@@ -191,6 +191,7 @@ pub(crate) fn parse_link_row(row: (String, String, String, Option<String>)) -> L
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TEST_SCHEMA;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
@@ -200,36 +201,7 @@ mod tests {
             .await
             .unwrap();
 
-        let schema = r#"
-            CREATE TABLE IF NOT EXISTS pages (
-                slug TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                page_type TEXT NOT NULL DEFAULT '',
-                vault TEXT NOT NULL DEFAULT '',
-                content_hash TEXT NOT NULL DEFAULT '',
-                compiled_truth TEXT NOT NULL DEFAULT '',
-                raw_content TEXT NOT NULL DEFAULT '',
-                timeline_json TEXT NOT NULL DEFAULT '',
-                timeline_text TEXT NOT NULL DEFAULT '',
-                frontmatter_json TEXT NOT NULL DEFAULT '',
-                tags_json TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS links (
-                source_slug TEXT NOT NULL,
-                target_slug TEXT NOT NULL,
-                link_type TEXT NOT NULL,
-                context_snippet TEXT,
-                UNIQUE(source_slug, target_slug, link_type)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_slug);
-            CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_slug);
-        "#;
-
-        sqlx::raw_sql(schema)
+        sqlx::raw_sql(TEST_SCHEMA)
             .execute(&pool)
             .await
             .unwrap();
