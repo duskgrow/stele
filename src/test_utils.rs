@@ -73,24 +73,34 @@ pub fn sample_page_with_type(slug: &str, content: &str, page_type: PageType) -> 
 }
 
 #[cfg(test)]
-pub async fn test_registry() -> OperationRegistry {
-    let fns = Arc::new(FnsClient::new(
-        "http://localhost".into(),
-        "test-token".into(),
-        "test-vault".into(),
-    ).unwrap());
-    let index = Arc::new(
+pub async fn test_index() -> Arc<IndexEngine> {
+    Arc::new(
         IndexEngine::new("sqlite::memory:")
             .await
             .expect("in-memory index"),
-    );
+    )
+}
+
+#[cfg(test)]
+pub async fn test_fns(server_uri: &str) -> Arc<FnsClient> {
+    Arc::new(FnsClient::new(
+        server_uri.into(),
+        "test-token".into(),
+        "test-vault".into(),
+    ))
+}
+
+#[cfg(test)]
+pub async fn test_registry_for_server(server_uri: &str) -> OperationRegistry {
+    let fns = test_fns(server_uri).await;
+    let index = test_index().await;
     let config = Config {
         server: ServerConfig {
             host: "127.0.0.1".into(),
             port: 8080,
         },
         fns: FnsConfig {
-            base_url: "http://localhost".into(),
+            base_url: server_uri.into(),
             token: "test-token".into(),
             vault: "test-vault".into(),
         },
@@ -99,4 +109,23 @@ pub async fn test_registry() -> OperationRegistry {
         },
     };
     OperationRegistry::new(fns, index, config)
+}
+
+#[cfg(test)]
+pub async fn setup_test_fns_and_index() -> (FnsClient, IndexEngine, wiremock::MockServer) {
+    let server = wiremock::MockServer::start().await;
+    let fns = FnsClient::new(
+        server.uri(),
+        "test-token".into(),
+        "test-vault".into(),
+    );
+    let index = IndexEngine::new("sqlite::memory:")
+        .await
+        .expect("in-memory index");
+    (fns, index, server)
+}
+
+#[cfg(test)]
+pub async fn test_registry() -> OperationRegistry {
+    test_registry_for_server("http://localhost").await
 }

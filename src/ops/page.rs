@@ -170,8 +170,9 @@ pub async fn handle_page_list(fns: &FnsClient, dir: Option<&str>) -> Result<serd
 mod tests {
     use super::*;
     use crate::graph;
+    use crate::test_utils::setup_test_fns_and_index;
     use wiremock::matchers::{method, path, query_param};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, ResponseTemplate};
 
     fn sample_frontmatter_json(_slug: &str) -> serde_json::Value {
         serde_json::json!({
@@ -195,20 +196,11 @@ mod tests {
         }
     }
 
-    async fn setup_fns_and_index() -> (FnsClient, IndexEngine, MockServer) {
-        let server = MockServer::start().await;
-        let fns = FnsClient::new(
-            server.uri(),
-            "test-token".to_string(),
-            "test-vault".to_string(),
-        );
-        let index = IndexEngine::new(":memory:").await.expect("in-memory index");
-        (fns, index, server)
-    }
+
 
     #[tokio::test]
     async fn test_page_put_get_roundtrip() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "test-page";
         let body = sample_body(slug);
 
@@ -295,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_get_structured_output() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "structured-page";
         let md = "---\ntitle: Structured Test\npage_type: Concept\ntags:\n  - rust\n  - test\nsources:\n  - https://example.com\n---\nThis is the compiled truth.\n---\n- 2024-01-01 [agent-a]: First entry\n- 2024-06-15 [https://source.com]: Second entry\n";
 
@@ -351,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_get_empty_timeline() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "no-timeline-page";
         let md = "---\ntitle: No Timeline\npage_type: Entity\ntags: []\nsources: []\n---\nJust the body.\n";
 
@@ -381,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_get_not_found() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "missing-page";
 
         Mock::given(method("GET"))
@@ -409,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_indexes() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "indexed-page";
         let body = sample_body(slug);
         let fm_json = sample_frontmatter_json(slug);
@@ -457,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_extracts_links() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "link-page";
         let body = "See [[page-a]] and [[cites::page-b|Reference]].\n";
         let fm_json = serde_json::json!({
@@ -514,7 +506,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_delete() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "delete-page";
         let body = sample_body(slug);
         let fm_json = sample_frontmatter_json(slug);
@@ -575,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_etag_conflict() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "etag-page";
         let body = sample_body(slug);
         let fm_json = sample_frontmatter_json(slug);
@@ -635,7 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fns_failure() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "fails-page";
         let body = sample_body(slug);
         let fm_json = sample_frontmatter_json(slug);
@@ -674,7 +666,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_list_root() {
-        let (fns, _index, server) = setup_fns_and_index().await;
+        let (fns, _index, server) = setup_test_fns_and_index().await;
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -726,7 +718,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_list_subfolder() {
-        let (fns, _index, server) = setup_fns_and_index().await;
+        let (fns, _index, server) = setup_test_fns_and_index().await;
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -775,7 +767,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_list_leaf() {
-        let (fns, _index, server) = setup_fns_and_index().await;
+        let (fns, _index, server) = setup_test_fns_and_index().await;
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -817,7 +809,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_list_fns_error() {
-        let (fns, _index, server) = setup_fns_and_index().await;
+        let (fns, _index, server) = setup_test_fns_and_index().await;
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -845,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_new_page_requires_frontmatter() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "new-page";
         let body = "Some content.\n";
 
@@ -877,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_new_page_requires_title() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "new-page";
         let body = "Some content.\n";
         let fm_no_title = serde_json::json!({"page_type": "Stub"});
@@ -910,7 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_new_page_rejects_empty_title() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "new-page";
         let body = "Some content.\n";
         let fm_empty_title = serde_json::json!({"title": ""});
@@ -943,7 +935,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_update_existing_merges_frontmatter() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "existing-page";
         let existing_content = "---\ntitle: Old Title\npage_type: Concept\ntags:\n  - rust\nsources: []\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
 
@@ -996,7 +988,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_update_existing_no_frontmatter_merges_empty() {
-        let (fns, index, server) = setup_fns_and_index().await;
+        let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "existing-page";
         let existing_content = "---\ntitle: Keep Title\npage_type: Concept\ntags:\n  - rust\nsources: []\n---\nOld body.\n---\n- 2024-01-01: Old entry\n";
 

@@ -109,17 +109,10 @@ mod tests {
     /// Test that OperationContext has the expected fields.
     #[tokio::test]
     async fn test_operation_context_fields() {
+        use crate::test_utils::*;
         let server = wiremock::MockServer::start().await;
-        let fns = Arc::new(FnsClient::new(
-            server.uri(),
-            "test-token".into(),
-            "test-vault".into(),
-        ));
-        let index = Arc::new(
-            IndexEngine::new("sqlite::memory:")
-                .await
-                .expect("in-memory index"),
-        );
+        let fns = test_fns(&server.uri()).await;
+        let index = test_index().await;
         let config = Config::default();
 
         let ctx = OperationContext { fns, index, config };

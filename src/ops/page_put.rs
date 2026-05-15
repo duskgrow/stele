@@ -223,7 +223,6 @@ inventory::submit! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_page_put_handler_meta() {
@@ -340,17 +339,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_put_execute_invalid_page_type_rejected() {
+        use crate::test_utils::*;
         let server = wiremock::MockServer::start().await;
-        let fns = Arc::new(crate::fns::FnsClient::new(
-            server.uri(),
-            "test-token".into(),
-            "test-vault".into(),
-        ));
-        let index = Arc::new(
-            crate::index::IndexEngine::new("sqlite::memory:")
-                .await
-                .expect("in-memory index"),
-        );
+        let fns = test_fns(&server.uri()).await;
+        let index = test_index().await;
         let config = crate::config::Config::default();
         let ctx = crate::ops::handler::OperationContext { fns, index, config };
 
@@ -395,16 +387,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let fns = Arc::new(crate::fns::FnsClient::new(
-            server.uri(),
-            "test-token".into(),
-            "test-vault".into(),
-        ));
-        let index = Arc::new(
-            crate::index::IndexEngine::new("sqlite::memory:")
-                .await
-                .expect("in-memory index"),
-        );
+        use crate::test_utils::*;
+        let fns = test_fns(&server.uri()).await;
+        let index = test_index().await;
         let config = crate::config::Config::default();
         let ctx = crate::ops::handler::OperationContext { fns, index, config };
 

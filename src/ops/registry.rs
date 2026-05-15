@@ -96,7 +96,6 @@ impl OperationRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::test_utils::*;
 
     #[tokio::test]
@@ -194,31 +193,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let fns = Arc::new(FnsClient::new(
-            server.uri(),
-            "test-token".into(),
-            "test-vault".into(),
-        ));
-        let index = Arc::new(
-            IndexEngine::new("sqlite::memory:")
-                .await
-                .expect("in-memory index"),
-        );
-        let config = Config {
-            server: crate::config::ServerConfig {
-                host: "127.0.0.1".into(),
-                port: 8080,
-            },
-            fns: crate::config::FnsConfig {
-                base_url: server.uri(),
-                token: "test-token".into(),
-                vault: "test-vault".into(),
-            },
-            index: crate::config::IndexConfig {
-                db_path: "sqlite::memory:".into(),
-            },
-        };
-        let reg = OperationRegistry::new(fns, index, config);
+        let reg = test_registry_for_server(&server.uri()).await;
 
         let args = serde_json::json!({"slug": "test"});
         let page_get = reg.execute_mcp("page.get", Some(serde_json::from_value(args).unwrap())).await;
