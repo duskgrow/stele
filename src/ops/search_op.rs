@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use crate::config::Config;
 use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
@@ -53,9 +56,13 @@ impl OpHandler for SearchHandler {
             .and_then(|v| v.as_i64());
         let type_filter = args.get("type_filter")
             .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         let sort = args.get("sort")
             .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         Ok(Box::new(SearchOp { query, limit, type_filter, sort }))
     }
@@ -137,6 +144,58 @@ mod tests {
     }
 
     #[test]
+    fn test_search_from_mcp_args_empty_type_filter() {
+        let handler = SearchHandler;
+        let mut args = serde_json::Map::new();
+        args.insert("query".to_string(), serde_json::Value::String("rust".to_string()));
+        args.insert("type_filter".to_string(), serde_json::Value::String("".to_string()));
+
+        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let op = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert!(op.type_filter.is_none(), "empty type_filter should normalize to None");
+    }
+
+    #[test]
+    fn test_search_from_mcp_args_whitespace_type_filter() {
+        let handler = SearchHandler;
+        let mut args = serde_json::Map::new();
+        args.insert("query".to_string(), serde_json::Value::String("rust".to_string()));
+        args.insert("type_filter".to_string(), serde_json::Value::String("   ".to_string()));
+
+        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let op = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert!(op.type_filter.is_none(), "whitespace type_filter should normalize to None");
+    }
+
+    #[test]
+    fn test_search_from_mcp_args_valid_type_filter() {
+        let handler = SearchHandler;
+        let mut args = serde_json::Map::new();
+        args.insert("query".to_string(), serde_json::Value::String("rust".to_string()));
+        args.insert("type_filter".to_string(), serde_json::Value::String("Entity".to_string()));
+
+        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let op = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert_eq!(op.type_filter, Some("Entity".to_string()));
+    }
+
+    #[test]
+    fn test_search_from_mcp_args_empty_sort() {
+        let handler = SearchHandler;
+        let mut args = serde_json::Map::new();
+        args.insert("query".to_string(), serde_json::Value::String("rust".to_string()));
+        args.insert("sort".to_string(), serde_json::Value::String("".to_string()));
+
+        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let op = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert!(op.sort.is_none(), "empty sort should normalize to None");
+    }
+
+    #[test]
     fn test_search_missing_query() {
         let handler = SearchHandler;
         let result = handler.from_mcp_args(None);
@@ -167,5 +226,49 @@ mod tests {
         let op = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
         assert_eq!(op.query, "rust");
         assert_eq!(op.sort, Some("title".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_type_filter_integration() {
+        use crate::index::IndexEngine;
+        use crate::test_utils::*;
+        use crate::types::PageType;
+
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        let page = sample_page(
+            "rust-page",
+            "Rust Programming Language",
+            PageType::Concept,
+            "Rust is great for systems programming.",
+        );
+        engine.index_page(&page).await.unwrap();
+
+        let fns = test_fns("http://localhost").await;
+        let index = Arc::new(engine);
+        let config = Config::default();
+        let ctx = OperationContext { fns, index, config };
+
+        let op_no_filter = SearchOp {
+            query: "systems".to_string(),
+            limit: Some(10),
+            type_filter: None,
+            sort: None,
+        };
+        let result_no_filter = op_no_filter.execute(&ctx).await.unwrap();
+
+        let mut args = serde_json::Map::new();
+        args.insert("query".to_string(), serde_json::Value::String("systems".to_string()));
+        args.insert("type_filter".to_string(), serde_json::Value::String("".to_string()));
+
+        let handler = SearchHandler;
+        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let op_empty_filter = exec.as_any().downcast_ref::<SearchOp>().expect("should be SearchOp");
+        let result_empty_filter = op_empty_filter.execute(&ctx).await.unwrap();
+
+        assert_eq!(result_no_filter["total"], result_empty_filter["total"]);
+        assert_eq!(
+            result_no_filter["results"].as_array().unwrap().len(),
+            result_empty_filter["results"].as_array().unwrap().len()
+        );
     }
 }
