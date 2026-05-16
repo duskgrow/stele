@@ -196,8 +196,6 @@ mod tests {
         }
     }
 
-
-
     #[tokio::test]
     async fn test_page_put_get_roundtrip() {
         let (fns, index, server) = setup_test_fns_and_index().await;
@@ -872,7 +870,7 @@ mod tests {
         let (fns, index, server) = setup_test_fns_and_index().await;
         let slug = "new-page";
         let body = "Some content.\n";
-        let fm_no_title = serde_json::json!({"page_type": "Stub"});
+        let fm_no_title = serde_json::json!({"page_type": "Entity"});
 
         Mock::given(method("GET"))
             .and(path("/api/note"))

@@ -33,7 +33,6 @@ fn default_shared() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub enum PageType {
-    #[serde(alias = "Stub")]
     Entity,
     Concept,
     Source,
@@ -228,33 +227,26 @@ mod tests {
 
     #[test]
     fn visibility_defaults_to_shared() {
-        let fm: Frontmatter = serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#).unwrap();
+        let fm: Frontmatter =
+            serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#)
+                .unwrap();
         assert_eq!(fm.visibility, "shared");
     }
 
     #[test]
     fn created_by_defaults_to_none() {
-        let fm: Frontmatter = serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#).unwrap();
+        let fm: Frontmatter =
+            serde_json::from_str(r#"{"title":"T","page_type":"Entity","tags":[],"sources":[]}"#)
+                .unwrap();
         assert_eq!(fm.created_by, None);
-    }
-
-    #[test]
-    fn stub_alias_deserializes_to_entity_json() {
-        let pt: PageType = serde_json::from_str("\"Stub\"").unwrap();
-        assert_eq!(pt, PageType::Entity);
-    }
-
-    #[test]
-    fn stub_alias_deserializes_to_entity_yaml() {
-        let pt: PageType = serde_yaml::from_str("Stub").unwrap();
-        assert_eq!(pt, PageType::Entity);
     }
 
     #[test]
     fn old_status_field_silently_ignored_json() {
         let fm: Frontmatter = serde_json::from_str(
-            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"status":"Seedling"}"#
-        ).unwrap();
+            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"status":"Seedling"}"#,
+        )
+        .unwrap();
         assert_eq!(fm.title, "T");
         assert_eq!(fm.page_type, PageType::Entity);
     }
@@ -262,8 +254,9 @@ mod tests {
     #[test]
     fn old_related_field_silently_ignored_json() {
         let fm: Frontmatter = serde_json::from_str(
-            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"related":["foo","bar"]}"#
-        ).unwrap();
+            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"related":["foo","bar"]}"#,
+        )
+        .unwrap();
         assert_eq!(fm.title, "T");
         assert_eq!(fm.page_type, PageType::Entity);
     }
@@ -271,7 +264,7 @@ mod tests {
     #[test]
     fn all_old_fields_combined_ignored_json() {
         let fm: Frontmatter = serde_json::from_str(
-            r#"{"title":"T","page_type":"Stub","tags":[],"sources":[],"status":"Seedling","related":["foo","bar"]}"#
+            r#"{"title":"T","page_type":"Entity","tags":[],"sources":[],"status":"Seedling","related":["foo","bar"]}"#
         ).unwrap();
         assert_eq!(fm.title, "T");
         assert_eq!(fm.page_type, PageType::Entity);

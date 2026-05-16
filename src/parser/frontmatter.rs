@@ -62,7 +62,9 @@ impl From<FrontmatterHelper> for Frontmatter {
 /// followed by `---\n`. Returns the parsed Frontmatter and the body content.
 pub fn parse(raw: &str) -> Result<(Frontmatter, String)> {
     if !raw.starts_with("---\n") {
-        return Err(Error::Parse("missing opening frontmatter delimiter".to_string()));
+        return Err(Error::Parse(
+            "missing opening frontmatter delimiter".to_string(),
+        ));
     }
 
     let after_open = &raw[4..];
@@ -85,7 +87,9 @@ pub fn parse(raw: &str) -> Result<(Frontmatter, String)> {
 
             Ok((frontmatter, body.to_string()))
         }
-        None => Err(Error::Parse("missing closing frontmatter delimiter".to_string())),
+        None => Err(Error::Parse(
+            "missing closing frontmatter delimiter".to_string(),
+        )),
     }
 }
 
@@ -119,9 +123,8 @@ pub fn merge_frontmatter(existing: &Frontmatter, updates: &Value) -> Result<Fron
                 result.title = serde_json::from_value(value.clone())?;
             }
             "page_type" => {
-                result.page_type = serde_json::from_value(value.clone()).map_err(|e| {
-                    Error::Parse(format!("page_type: {e}"))
-                })?;
+                result.page_type = serde_json::from_value(value.clone())
+                    .map_err(|e| Error::Parse(format!("page_type: {e}")))?;
             }
             "tags" => {
                 result.tags = serde_json::from_value(value.clone())?;
@@ -188,7 +191,10 @@ mod tests {
         let result = parse(raw);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("missing opening frontmatter delimiter"), "expected opening delimiter error, got: {err}");
+        assert!(
+            err.contains("missing opening frontmatter delimiter"),
+            "expected opening delimiter error, got: {err}"
+        );
     }
 
     #[test]
@@ -198,7 +204,10 @@ mod tests {
         let result = parse(raw);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("missing closing frontmatter delimiter"), "expected closing delimiter error, got: {err}");
+        assert!(
+            err.contains("missing closing frontmatter delimiter"),
+            "expected closing delimiter error, got: {err}"
+        );
     }
 
     #[test]
@@ -309,7 +318,8 @@ mod tests {
 
     #[test]
     fn test_unicode_in_title_and_body() {
-        let raw = "---\ntitle: \u{6d4b}\u{8bd5}\n---\n\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n";
+        let raw =
+            "---\ntitle: \u{6d4b}\u{8bd5}\n---\n\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n";
         let (fm, body) = parse(raw).unwrap();
         assert_eq!(fm.title, "\u{6d4b}\u{8bd5}");
         assert_eq!(body, "\u{8fd9}\u{662f}\u{4e00}\u{4e2a}\u{6d4b}\u{8bd5}\n");
@@ -400,7 +410,10 @@ mod tests {
         let result = merge_frontmatter(&existing, &updates);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("page_type"), "error should mention page_type: {err}");
+        assert!(
+            err.contains("page_type"),
+            "error should mention page_type: {err}"
+        );
     }
 
     #[test]
@@ -441,15 +454,6 @@ mod tests {
     }
 
     #[test]
-    fn stub_page_type_maps_to_entity() {
-        let raw = "---\ntitle: Old Stub\npage_type: Stub\n---\nBody.\n";
-        let (fm, body) = parse(raw).unwrap();
-        assert_eq!(fm.title, "Old Stub");
-        assert_eq!(fm.page_type, PageType::Entity);
-        assert_eq!(body, "Body.\n");
-    }
-
-    #[test]
     fn old_status_field_silently_ignored_yaml() {
         let raw = "---\ntitle: With Status\npage_type: Entity\nstatus: Seedling\n---\nBody.\n";
         let (fm, body) = parse(raw).unwrap();
@@ -460,7 +464,8 @@ mod tests {
 
     #[test]
     fn old_related_field_silently_ignored_yaml() {
-        let raw = "---\ntitle: With Related\npage_type: Entity\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
+        let raw =
+            "---\ntitle: With Related\npage_type: Entity\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
         let (fm, body) = parse(raw).unwrap();
         assert_eq!(fm.title, "With Related");
         assert_eq!(fm.page_type, PageType::Entity);
@@ -469,7 +474,7 @@ mod tests {
 
     #[test]
     fn all_old_fields_combined_ignored_yaml() {
-        let raw = "---\ntitle: All Old\npage_type: Stub\nstatus: Seedling\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
+        let raw = "---\ntitle: All Old\npage_type: Entity\nstatus: Seedling\nrelated:\n  - foo\n  - bar\n---\nBody.\n";
         let (fm, body) = parse(raw).unwrap();
         assert_eq!(fm.title, "All Old");
         assert_eq!(fm.page_type, PageType::Entity);
