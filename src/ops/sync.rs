@@ -5,6 +5,7 @@ use tracing::{info, warn};
 
 use crate::fns::FnsClient;
 use crate::index::IndexEngine;
+use crate::ops::is_hidden_path;
 use crate::parser::{page as page_parser, wikilink};
 use crate::types::Result;
 
@@ -44,6 +45,7 @@ async fn sync_directory(
             return;
         }
     };
+    let notes: Vec<String> = notes.into_iter().filter(|p| !is_hidden_path(p)).collect();
 
     for file_path in &notes {
         match page_parser::normalize_slug(file_path) {
@@ -144,6 +146,7 @@ async fn sync_directory(
             return;
         }
     };
+    let folders: Vec<String> = folders.into_iter().filter(|p| !is_hidden_path(p)).collect();
 
     for folder in folders {
         Box::pin(sync_directory(fns, index, &folder, fns_slugs, result, depth + 1)).await;
@@ -614,6 +617,62 @@ sources: []
 
         assert!(index.get_page("root").await.unwrap().is_some());
         assert!(index.get_page("wiki/hello").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sync_skips_dot_prefixed_folders() {
+        let server = MockServer::start().await;
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        setup_list_mock_for_dir(&server, ".", &["root.md"]).await;
+        setup_folders_mock_with(&server, ".", &[".archive", "wiki", ".hidden"]).await;
+
+        let root_content = sample_markdown("Root", "Root page");
+        setup_note_mock(&server, "root.md", &root_content).await;
+
+        setup_list_mock_for_dir(&server, "wiki", &["wiki/hello.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
+
+        let wiki_content = sample_markdown("Hello", "Wiki page");
+        setup_note_mock(&server, "wiki/hello.md", &wiki_content).await;
+
+        let fns = FnsClient::new(
+            server.uri(),
+            "test-token".to_string(),
+            "test-vault".to_string(),
+        );
+        let result = handle_sync(&fns, &index, None).await.unwrap();
+
+        assert_eq!(result["pages_indexed"], 2);
+        assert_eq!(result["errors"].as_array().unwrap().len(), 0);
+
+        assert!(index.get_page("root").await.unwrap().is_some());
+        assert!(index.get_page("wiki/hello").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sync_skips_dot_prefixed_files() {
+        let server = MockServer::start().await;
+        let index = IndexEngine::new(":memory:").await.unwrap();
+
+        setup_list_mock_for_dir(&server, ".", &[".secret.md", "readme.md"]).await;
+        setup_folders_mock(&server, ".").await;
+
+        let readme_content = sample_markdown("Readme", "Readme page");
+        setup_note_mock(&server, "readme.md", &readme_content).await;
+
+        let fns = FnsClient::new(
+            server.uri(),
+            "test-token".to_string(),
+            "test-vault".to_string(),
+        );
+        let result = handle_sync(&fns, &index, None).await.unwrap();
+
+        assert_eq!(result["pages_indexed"], 1);
+        assert_eq!(result["errors"].as_array().unwrap().len(), 0);
+
+        assert!(index.get_page("readme").await.unwrap().is_some());
+        assert!(index.get_page(".secret").await.unwrap().is_none());
     }
 
     #[tokio::test]

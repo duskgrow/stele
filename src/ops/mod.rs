@@ -18,3 +18,8 @@ pub mod sync_op;
 pub use handler::{OpExec, OpHandler, OperationContext};
 
 pub use registry::{OperationMeta, OperationRegistry};
+
+/// Returns true if the basename of the path starts with a dot.
+pub(crate) fn is_hidden_path(path: &str) -> bool {
+    path.rsplit('/').next().unwrap_or(path).starts_with('.')
+}

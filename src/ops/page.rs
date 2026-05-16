@@ -4,6 +4,7 @@ use tracing::warn;
 
 use crate::fns::FnsClient;
 use crate::index::IndexEngine;
+use crate::ops::is_hidden_path;
 use crate::parser::frontmatter;
 use crate::parser::page as page_parser;
 use crate::parser::wikilink;
@@ -155,8 +156,8 @@ pub async fn handle_page_list(fns: &FnsClient, dir: Option<&str>) -> Result<serd
     let dir = dir.unwrap_or(".");
     let (files, folders) = tokio::join!(fns.list_notes(dir), fns.list_folders(dir),);
 
-    let files = files?;
-    let folders = folders?;
+    let files: Vec<String> = files?.into_iter().filter(|p| !is_hidden_path(p)).collect();
+    let folders: Vec<String> = folders?.into_iter().filter(|p| !is_hidden_path(p)).collect();
     let count = files.len() + folders.len();
 
     Ok(json!({
@@ -803,6 +804,62 @@ mod tests {
         assert!(result["files"].as_array().unwrap().is_empty());
         assert!(result["folders"].as_array().unwrap().is_empty());
         assert_eq!(result["count"].as_u64().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_page_list_excludes_dot_prefixed_entries() {
+        let (fns, _index, server) = setup_test_fns_and_index().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folder/notes"))
+            .and(query_param("vault", "test-vault"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": {
+                    "list": [
+                        {"path": ".secret.md"},
+                        {"path": "readme.md"},
+                        {"path": ".env.md"}
+                    ],
+                    "pager": { "totalRows": 3 }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folders"))
+            .and(query_param("vault", "test-vault"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": [
+                    {"path": ".archive", "pathHash": "abc"},
+                    {"path": "wiki", "pathHash": "def"},
+                    {"path": ".hidden", "pathHash": "ghi"}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_list(&fns, None)
+            .await
+            .expect("list should succeed");
+
+        let files = result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].as_str().unwrap(), "readme.md");
+
+        let folders = result["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].as_str().unwrap(), "wiki");
+
+        assert_eq!(result["count"].as_u64().unwrap(), 2);
     }
 
     #[tokio::test]
