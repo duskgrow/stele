@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::config::Config;
 use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
@@ -93,7 +90,9 @@ inventory::submit! {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn test_search_handler_meta() {
