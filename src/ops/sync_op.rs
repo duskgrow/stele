@@ -1,6 +1,6 @@
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
 pub struct SyncHandler;
@@ -23,9 +23,13 @@ impl OpExec for SyncOp {
 }
 
 impl OpHandler for SyncHandler {
-    fn name(&self) -> &'static str { "sync" }
-    fn description(&self) -> &'static str { "Sync pages from FNS vault" }
-    
+    fn name(&self) -> &'static str {
+        "sync"
+    }
+    fn description(&self) -> &'static str {
+        "Sync pages from FNS vault"
+    }
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -34,22 +38,29 @@ impl OpHandler for SyncHandler {
             }
         })
     }
-    
-    fn from_mcp_args(&self, args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_mcp_args(
+        &self,
+        args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let args = args.unwrap_or_default();
-        let dir = args.get("dir")
+        let dir = args
+            .get("dir")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         Ok(Box::new(SyncOp { dir }))
     }
-    
+
     fn cli_command(&self) -> clap::Command {
         clap::Command::new("sync")
             .about("Sync from FNS vault")
             .arg(clap::Arg::new("dir").long("dir"))
     }
-    
-    fn from_cli_matches(&self, matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_cli_matches(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let dir = matches.get_one::<String>("dir").cloned();
         Ok(Box::new(SyncOp { dir }))
     }
@@ -80,16 +91,23 @@ mod tests {
     fn test_sync_from_mcp_args_with_dir() {
         let handler = SyncHandler;
         let mut args = serde_json::Map::new();
-        args.insert("dir".to_string(), serde_json::Value::String("/notes".to_string()));
-        
-        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        args.insert(
+            "dir".to_string(),
+            serde_json::Value::String("/notes".to_string()),
+        );
+
+        let exec = handler
+            .from_mcp_args(Some(args))
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
     #[test]
     fn test_sync_from_mcp_args_without_dir() {
         let handler = SyncHandler;
-        let exec = handler.from_mcp_args(None).expect("from_mcp_args should succeed without dir");
+        let exec = handler
+            .from_mcp_args(None)
+            .expect("from_mcp_args should succeed without dir");
         let _ = exec;
     }
 
@@ -99,6 +117,10 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"sync"), "sync should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"sync"),
+            "sync should be in inventory, found: {:?}",
+            names
+        );
     }
 }

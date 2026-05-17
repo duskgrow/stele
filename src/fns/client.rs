@@ -160,7 +160,8 @@ impl FnsClient {
                 self.base_url,
                 encode_query_value(&self.vault),
                 encode_query_value(dir),
-                page, page_size
+                page,
+                page_size
             );
             let resp = self
                 .execute_request(|| async {
@@ -288,7 +289,9 @@ impl FnsClient {
             Ok(fns_resp.data.unwrap_or(Value::Null))
         } else if fns_resp.code == 430 {
             Err(Error::NotFound(
-                fns_resp.message.unwrap_or_else(|| "Note does not exist".to_string()),
+                fns_resp
+                    .message
+                    .unwrap_or_else(|| "Note does not exist".to_string()),
             ))
         } else {
             Err(Error::Fns(fns_resp.message.unwrap_or_default()))
@@ -392,9 +395,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/note"))
-            .respond_with(
-                ResponseTemplate::new(200).set_delay(Duration::from_millis(200)),
-            )
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(200)))
             .expect(4)
             .mount(&server)
             .await;

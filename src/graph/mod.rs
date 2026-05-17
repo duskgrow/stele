@@ -48,12 +48,20 @@ pub(crate) async fn query_links(
 }
 
 /// Get all outgoing links from a page, optionally filtered by link type.
-pub async fn get_outlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+pub async fn get_outlinks(
+    db: &SqlitePool,
+    slug: &str,
+    link_type: Option<&str>,
+) -> Result<Vec<Link>> {
     query_links(db, slug, LinkDirection::Out, link_type).await
 }
 
 /// Get all incoming links to a page, optionally filtered by link type.
-pub async fn get_backlinks(db: &SqlitePool, slug: &str, link_type: Option<&str>) -> Result<Vec<Link>> {
+pub async fn get_backlinks(
+    db: &SqlitePool,
+    slug: &str,
+    link_type: Option<&str>,
+) -> Result<Vec<Link>> {
     query_links(db, slug, LinkDirection::In, link_type).await
 }
 
@@ -147,10 +155,11 @@ pub async fn find_orphans(db: &SqlitePool) -> Result<Vec<String>> {
 
 /// Get all unique link types present in the graph.
 pub async fn get_link_types(db: &SqlitePool) -> Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT link_type FROM links ORDER BY link_type")
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Storage(format!("get_link_types: {e}")))?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT link_type FROM links ORDER BY link_type")
+            .fetch_all(db)
+            .await
+            .map_err(|e| Error::Storage(format!("get_link_types: {e}")))?;
 
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
@@ -201,10 +210,7 @@ mod tests {
             .await
             .unwrap();
 
-        sqlx::raw_sql(TEST_SCHEMA)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::raw_sql(TEST_SCHEMA).execute(&pool).await.unwrap();
 
         pool
     }
@@ -219,15 +225,13 @@ mod tests {
     }
 
     async fn insert_link(pool: &SqlitePool, source: &str, target: &str, link_type: &str) {
-        sqlx::query(
-            "INSERT INTO links (source_slug, target_slug, link_type) VALUES (?1, ?2, ?3)",
-        )
-        .bind(source)
-        .bind(target)
-        .bind(link_type)
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO links (source_slug, target_slug, link_type) VALUES (?1, ?2, ?3)")
+            .bind(source)
+            .bind(target)
+            .bind(link_type)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -241,10 +245,15 @@ mod tests {
 
         let outlinks = get_outlinks(&pool, "page-a", None).await.unwrap();
         assert_eq!(outlinks.len(), 2);
-        assert!(outlinks.iter().any(|l| l.target_slug == "page-b"
-            && l.link_type == LinkType::Plain));
-        assert!(outlinks.iter().any(|l| l.target_slug == "page-c"
-            && l.link_type == LinkType::Custom("cites".to_string())));
+        assert!(
+            outlinks
+                .iter()
+                .any(|l| l.target_slug == "page-b" && l.link_type == LinkType::Plain)
+        );
+        assert!(
+            outlinks.iter().any(|l| l.target_slug == "page-c"
+                && l.link_type == LinkType::Custom("cites".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -258,8 +267,11 @@ mod tests {
 
         let backlinks = get_backlinks(&pool, "page-b", None).await.unwrap();
         assert_eq!(backlinks.len(), 2);
-        assert!(backlinks.iter().any(|l| l.source_slug == "page-a"
-            && l.link_type == LinkType::Plain));
+        assert!(
+            backlinks
+                .iter()
+                .any(|l| l.source_slug == "page-a" && l.link_type == LinkType::Plain)
+        );
         assert!(backlinks.iter().any(|l| l.source_slug == "page-c"
             && l.link_type == LinkType::Custom("references".to_string())));
     }
@@ -352,7 +364,9 @@ mod tests {
         let backlinks = get_backlinks(&pool, "nonexistent", None).await.unwrap();
         assert!(backlinks.is_empty());
 
-        let neighbors = get_neighbors(&pool, "nonexistent", 3, None, None).await.unwrap();
+        let neighbors = get_neighbors(&pool, "nonexistent", 3, None, None)
+            .await
+            .unwrap();
         assert!(neighbors.is_empty());
 
         let orphans = find_orphans(&pool).await.unwrap();
@@ -391,7 +405,9 @@ mod tests {
         assert_eq!(cites.len(), 1);
         assert_eq!(cites[0].target_slug, "page-c");
 
-        let none = get_outlinks(&pool, "page-a", Some("missing")).await.unwrap();
+        let none = get_outlinks(&pool, "page-a", Some("missing"))
+            .await
+            .unwrap();
         assert!(none.is_empty());
     }
 
@@ -408,7 +424,9 @@ mod tests {
         assert_eq!(plain.len(), 1);
         assert_eq!(plain[0].source_slug, "page-a");
 
-        let refs = get_backlinks(&pool, "page-b", Some("references")).await.unwrap();
+        let refs = get_backlinks(&pool, "page-b", Some("references"))
+            .await
+            .unwrap();
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].source_slug, "page-c");
     }
@@ -422,7 +440,9 @@ mod tests {
         insert_link(&pool, "b", "a", "plain").await;
         insert_link(&pool, "c", "a", "plain").await;
 
-        let neighbors = get_neighbors(&pool, "a", 1, None, Some("in")).await.unwrap();
+        let neighbors = get_neighbors(&pool, "a", 1, None, Some("in"))
+            .await
+            .unwrap();
         assert_eq!(neighbors.len(), 2);
         let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
         assert!(slugs.contains(&"b".to_string()));
@@ -438,7 +458,9 @@ mod tests {
         insert_link(&pool, "a", "b", "plain").await;
         insert_link(&pool, "c", "a", "plain").await;
 
-        let neighbors = get_neighbors(&pool, "a", 1, None, Some("both")).await.unwrap();
+        let neighbors = get_neighbors(&pool, "a", 1, None, Some("both"))
+            .await
+            .unwrap();
         assert_eq!(neighbors.len(), 2);
         let slugs: Vec<String> = neighbors.iter().map(|(s, _)| s.clone()).collect();
         assert!(slugs.contains(&"b".to_string()));
@@ -454,11 +476,15 @@ mod tests {
         insert_link(&pool, "a", "b", "plain").await;
         insert_link(&pool, "a", "c", "cites").await;
 
-        let plain = get_neighbors(&pool, "a", 1, Some("plain"), None).await.unwrap();
+        let plain = get_neighbors(&pool, "a", 1, Some("plain"), None)
+            .await
+            .unwrap();
         assert_eq!(plain.len(), 1);
         assert_eq!(plain[0].0, "b");
 
-        let cites = get_neighbors(&pool, "a", 1, Some("cites"), None).await.unwrap();
+        let cites = get_neighbors(&pool, "a", 1, Some("cites"), None)
+            .await
+            .unwrap();
         assert_eq!(cites.len(), 1);
         assert_eq!(cites[0].0, "c");
     }
@@ -472,7 +498,9 @@ mod tests {
         insert_link(&pool, "b", "a", "plain").await;
         insert_link(&pool, "c", "b", "plain").await;
 
-        let neighbors = get_neighbors(&pool, "a", 2, None, Some("in")).await.unwrap();
+        let neighbors = get_neighbors(&pool, "a", 2, None, Some("in"))
+            .await
+            .unwrap();
         assert_eq!(neighbors.len(), 2);
         let by_dist: std::collections::HashMap<String, usize> = neighbors.into_iter().collect();
         assert_eq!(by_dist.get("b"), Some(&1));

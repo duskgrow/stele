@@ -1,6 +1,6 @@
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
 pub struct MaintainHandler;
@@ -23,9 +23,13 @@ impl OpExec for MaintainOp {
 }
 
 impl OpHandler for MaintainHandler {
-    fn name(&self) -> &'static str { "maintain" }
-    fn description(&self) -> &'static str { "Run maintenance tasks (lint, orphans, backlinks, full)" }
-    
+    fn name(&self) -> &'static str {
+        "maintain"
+    }
+    fn description(&self) -> &'static str {
+        "Run maintenance tasks (lint, orphans, backlinks, full)"
+    }
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -37,22 +41,34 @@ impl OpHandler for MaintainHandler {
             }
         })
     }
-    
-    fn from_mcp_args(&self, args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_mcp_args(
+        &self,
+        args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let args = args.unwrap_or_default();
-        let scope = args.get("scope")
+        let scope = args
+            .get("scope")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         Ok(Box::new(MaintainOp { scope }))
     }
-    
+
     fn cli_command(&self) -> clap::Command {
         clap::Command::new("maintain")
             .about("Run maintenance tasks")
-            .arg(clap::Arg::new("scope").long("scope").value_parser(["lint", "orphans", "backlinks", "full"]))
+            .arg(clap::Arg::new("scope").long("scope").value_parser([
+                "lint",
+                "orphans",
+                "backlinks",
+                "full",
+            ]))
     }
-    
-    fn from_cli_matches(&self, matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_cli_matches(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let scope = matches.get_one::<String>("scope").cloned();
         Ok(Box::new(MaintainOp { scope }))
     }
@@ -83,16 +99,23 @@ mod tests {
     fn test_maintain_from_mcp_args_with_scope() {
         let handler = MaintainHandler;
         let mut args = serde_json::Map::new();
-        args.insert("scope".to_string(), serde_json::Value::String("lint".to_string()));
-        
-        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        args.insert(
+            "scope".to_string(),
+            serde_json::Value::String("lint".to_string()),
+        );
+
+        let exec = handler
+            .from_mcp_args(Some(args))
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
     #[test]
     fn test_maintain_from_mcp_args_without_scope() {
         let handler = MaintainHandler;
-        let exec = handler.from_mcp_args(None).expect("from_mcp_args should succeed without scope");
+        let exec = handler
+            .from_mcp_args(None)
+            .expect("from_mcp_args should succeed without scope");
         let _ = exec;
     }
 
@@ -102,6 +125,10 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"maintain"), "maintain should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"maintain"),
+            "maintain should be in inventory, found: {:?}",
+            names
+        );
     }
 }

@@ -102,7 +102,12 @@ mod tests {
     async fn test_all_ops_have_meta() {
         let reg = test_registry().await;
         let metas = reg.list_operations();
-        assert_eq!(metas.len(), 10, "expected 10 operations, got {}", metas.len());
+        assert_eq!(
+            metas.len(),
+            10,
+            "expected 10 operations, got {}",
+            metas.len()
+        );
 
         for meta in &metas {
             assert!(!meta.name.is_empty(), "operation name must not be empty");
@@ -126,7 +131,8 @@ mod tests {
 
         let server = MockServer::start().await;
 
-        let sample_md = "---\ntitle: Test\npage_type: Entity\ntags: []\nsources: []\n---\nContent for test.\n";
+        let sample_md =
+            "---\ntitle: Test\npage_type: Entity\ntags: []\nsources: []\n---\nContent for test.\n";
 
         Mock::given(method("GET"))
             .and(path("/api/folder/notes"))
@@ -196,7 +202,9 @@ mod tests {
         let reg = test_registry_for_server(&server.uri()).await;
 
         let args = serde_json::json!({"slug": "test"});
-        let page_get = reg.execute_mcp("page.get", Some(serde_json::from_value(args).unwrap())).await;
+        let page_get = reg
+            .execute_mcp("page.get", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(page_get.is_ok(), "page.get failed: {:?}", page_get.err());
         let val = page_get.unwrap();
         assert!(val.get("slug").is_some());
@@ -217,7 +225,9 @@ mod tests {
             },
             "timeline": { "content": "Initial creation" }
         });
-        let page_put = reg.execute_mcp("page.put", Some(serde_json::from_value(args).unwrap())).await;
+        let page_put = reg
+            .execute_mcp("page.put", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(page_put.is_ok(), "page.put failed: {:?}", page_put.err());
         assert!(page_put.unwrap().get("indexed").is_some());
 
@@ -226,19 +236,25 @@ mod tests {
         assert!(page_list.unwrap().get("files").is_some());
 
         let args = serde_json::json!({"query": "Content", "limit": 10});
-        let search = reg.execute_mcp("search", Some(serde_json::from_value(args).unwrap())).await;
+        let search = reg
+            .execute_mcp("search", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(search.is_ok(), "search failed: {:?}", search.err());
         assert!(search.unwrap().get("results").is_some());
 
         let args = serde_json::json!({"slug": "test", "depth": 1});
-        let graph_q = reg.execute_mcp("graph.query", Some(serde_json::from_value(args).unwrap())).await;
+        let graph_q = reg
+            .execute_mcp("graph.query", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(graph_q.is_ok(), "graph.query failed: {:?}", graph_q.err());
 
         let sync = reg.execute_mcp("sync", None).await;
         assert!(sync.is_ok(), "sync failed: {:?}", sync.err());
 
         let args = serde_json::json!({"scope": "full"});
-        let maintain = reg.execute_mcp("maintain", Some(serde_json::from_value(args).unwrap())).await;
+        let maintain = reg
+            .execute_mcp("maintain", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(maintain.is_ok(), "maintain failed: {:?}", maintain.err());
         assert!(maintain.unwrap().get("issues_count").is_some());
 
@@ -251,7 +267,9 @@ mod tests {
         assert_eq!(reindex.unwrap()["reindexed"].as_bool(), Some(true));
 
         let args = serde_json::json!({"slug": "test"});
-        let page_del = reg.execute_mcp("page.delete", Some(serde_json::from_value(args).unwrap())).await;
+        let page_del = reg
+            .execute_mcp("page.delete", Some(serde_json::from_value(args).unwrap()))
+            .await;
         assert!(page_del.is_ok(), "page.delete failed: {:?}", page_del.err());
         assert_eq!(page_del.unwrap()["deleted"].as_bool(), Some(true));
     }
@@ -272,10 +290,12 @@ mod tests {
         let reg = test_registry().await;
         let metas = reg.list_operations();
         for meta in &metas {
-            let serialized = serde_json::to_string(&meta.input_schema)
-                .unwrap_or_else(|e| panic!("schema for '{}' failed to serialize: {}", meta.name, e));
-            let _: serde_json::Value = serde_json::from_str(&serialized)
-                .unwrap_or_else(|e| panic!("schema for '{}' failed to round-trip: {}", meta.name, e));
+            let serialized = serde_json::to_string(&meta.input_schema).unwrap_or_else(|e| {
+                panic!("schema for '{}' failed to serialize: {}", meta.name, e)
+            });
+            let _: serde_json::Value = serde_json::from_str(&serialized).unwrap_or_else(|e| {
+                panic!("schema for '{}' failed to round-trip: {}", meta.name, e)
+            });
         }
     }
 }

@@ -1,6 +1,6 @@
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
 pub struct PageGetHandler;
@@ -23,9 +23,13 @@ impl OpExec for PageGetOp {
 }
 
 impl OpHandler for PageGetHandler {
-    fn name(&self) -> &'static str { "page.get" }
-    fn description(&self) -> &'static str { "Retrieve a page by slug" }
-    
+    fn name(&self) -> &'static str {
+        "page.get"
+    }
+    fn description(&self) -> &'static str {
+        "Retrieve a page by slug"
+    }
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -35,24 +39,32 @@ impl OpHandler for PageGetHandler {
             "required": ["slug"]
         })
     }
-    
-    fn from_mcp_args(&self, args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_mcp_args(
+        &self,
+        args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let args = args.unwrap_or_default();
-        let slug = args.get("slug")
+        let slug = args
+            .get("slug")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("missing required field: slug"))?
             .to_string();
         Ok(Box::new(PageGetOp { slug }))
     }
-    
+
     fn cli_command(&self) -> clap::Command {
         clap::Command::new("get")
             .about("Get a page by slug")
             .arg(clap::Arg::new("slug").required(true))
     }
-    
-    fn from_cli_matches(&self, matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
-        let slug = matches.get_one::<String>("slug")
+
+    fn from_cli_matches(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
+        let slug = matches
+            .get_one::<String>("slug")
             .ok_or_else(|| anyhow::anyhow!("missing required argument: slug"))?
             .clone();
         Ok(Box::new(PageGetOp { slug }))
@@ -84,9 +96,14 @@ mod tests {
     fn test_page_get_from_mcp_args() {
         let handler = PageGetHandler;
         let mut args = serde_json::Map::new();
-        args.insert("slug".to_string(), serde_json::Value::String("test/page".to_string()));
-        
-        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        args.insert(
+            "slug".to_string(),
+            serde_json::Value::String("test/page".to_string()),
+        );
+
+        let exec = handler
+            .from_mcp_args(Some(args))
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
@@ -99,7 +116,10 @@ mod tests {
             Err(e) => e.to_string(),
             Ok(_) => panic!("expected error"),
         };
-        assert!(err.contains("missing required field: slug"), "expected slug error, got: {err}");
+        assert!(
+            err.contains("missing required field: slug"),
+            "expected slug error, got: {err}"
+        );
     }
 
     #[test]
@@ -108,6 +128,10 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"page.get"), "page.get should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"page.get"),
+            "page.get should be in inventory, found: {:?}",
+            names
+        );
     }
 }

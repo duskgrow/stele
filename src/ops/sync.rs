@@ -32,7 +32,10 @@ async fn sync_directory(
     depth: usize,
 ) {
     if depth > MAX_SYNC_DEPTH {
-        warn!("max sync depth ({}) reached at directory: {}", MAX_SYNC_DEPTH, dir);
+        warn!(
+            "max sync depth ({}) reached at directory: {}",
+            MAX_SYNC_DEPTH, dir
+        );
         return;
     }
 
@@ -149,7 +152,15 @@ async fn sync_directory(
     let folders: Vec<String> = folders.into_iter().filter(|p| !is_hidden_path(p)).collect();
 
     for folder in folders {
-        Box::pin(sync_directory(fns, index, &folder, fns_slugs, result, depth + 1)).await;
+        Box::pin(sync_directory(
+            fns,
+            index,
+            &folder,
+            fns_slugs,
+            result,
+            depth + 1,
+        ))
+        .await;
     }
 }
 
@@ -173,7 +184,10 @@ pub async fn handle_sync(
 
     sync_directory(fns, index, sync_dir, &mut fns_slugs, &mut result, 0).await;
 
-    info!("found {} total files across all directories", fns_slugs.len());
+    info!(
+        "found {} total files across all directories",
+        fns_slugs.len()
+    );
 
     let local_slugs = index.list_slugs().await?;
     for slug in local_slugs {
@@ -256,10 +270,7 @@ sources: []
     }
 
     async fn setup_list_mock(server: &MockServer, files: &[&str]) {
-        let list_items: Vec<serde_json::Value> = files
-            .iter()
-            .map(|f| json!({"path": f}))
-            .collect();
+        let list_items: Vec<serde_json::Value> = files.iter().map(|f| json!({"path": f})).collect();
         let total = files.len();
         let response_data = json!({
             "list": list_items,
@@ -275,10 +286,7 @@ sources: []
     }
 
     async fn setup_list_mock_for_dir(server: &MockServer, dir: &str, files: &[&str]) {
-        let list_items: Vec<serde_json::Value> = files
-            .iter()
-            .map(|f| json!({"path": f}))
-            .collect();
+        let list_items: Vec<serde_json::Value> = files.iter().map(|f| json!({"path": f})).collect();
         let total = files.len();
         let response_data = json!({
             "list": list_items,
@@ -312,7 +320,9 @@ sources: []
             .and(path("/api/folders"))
             .and(query_param("vault", "test-vault"))
             .and(query_param("path", dir))
-            .respond_with(ResponseTemplate::new(200).set_body_json(fns_response(json!(folder_items))))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(fns_response(json!(folder_items))),
+            )
             .mount(server)
             .await;
     }
@@ -335,10 +345,8 @@ sources: []
         setup_list_mock(&server, &["a.md", "b.md", "c.md"]).await;
 
         for name in &["a", "b", "c"] {
-            let content = sample_markdown(
-                &format!("Page {}", name),
-                &format!("Content of {}", name),
-            );
+            let content =
+                sample_markdown(&format!("Page {}", name), &format!("Content of {}", name));
             setup_note_mock(&server, &format!("{}.md", name), &content).await;
         }
 

@@ -40,7 +40,10 @@ pub trait OpHandler: Send + Sync + 'static {
     fn cli_command(&self) -> clap::Command;
     /// Parse clap ArgMatches into executable op
     #[allow(clippy::wrong_self_convention)]
-    fn from_cli_matches(&self, matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error>;
+    fn from_cli_matches(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error>;
 }
 
 // Register &'static dyn OpHandler with inventory for auto-collection.
@@ -148,7 +151,9 @@ mod tests {
         assert!(schema["properties"]["x"].is_object());
 
         // Test from_mcp_args
-        let exec = handler.from_mcp_args(None).expect("from_mcp_args should succeed");
+        let exec = handler
+            .from_mcp_args(None)
+            .expect("from_mcp_args should succeed");
         // We can't easily call execute without a real OperationContext, but we can verify it returns Ok
         let _ = exec;
 
@@ -158,7 +163,9 @@ mod tests {
 
         // Test from_cli_matches
         let matches = cmd.try_get_matches_from(["dummy"]).unwrap();
-        let exec = handler.from_cli_matches(&matches).expect("from_cli_matches should succeed");
+        let exec = handler
+            .from_cli_matches(&matches)
+            .expect("from_cli_matches should succeed");
         let _ = exec;
     }
 }

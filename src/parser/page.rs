@@ -9,8 +9,11 @@ const MAX_SLUG_LEN: usize = 255;
 pub fn parse_page(raw_markdown: &str, slug: &str) -> Result<Page> {
     validate_slug(slug)?;
 
-    let (frontmatter, body) = frontmatter::parse(raw_markdown)
-        .map_err(|e| Error::Parse(format!("failed to parse frontmatter for page '{slug}': {e}")))?;
+    let (frontmatter, body) = frontmatter::parse(raw_markdown).map_err(|e| {
+        Error::Parse(format!(
+            "failed to parse frontmatter for page '{slug}': {e}"
+        ))
+    })?;
     let (compiled_truth, timeline) = split_body(&body);
     let content_hash = compute_hash(raw_markdown);
 
@@ -489,7 +492,10 @@ Truth.
         let result = parse_page(raw, "");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("slug must not be empty"), "expected empty slug error, got: {err}");
+        assert!(
+            err.contains("slug must not be empty"),
+            "expected empty slug error, got: {err}"
+        );
     }
 
     #[test]
@@ -499,7 +505,10 @@ Truth.
         let result = parse_page(raw, &long_slug);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("exceeds maximum length"), "expected long slug error, got: {err}");
+        assert!(
+            err.contains("exceeds maximum length"),
+            "expected long slug error, got: {err}"
+        );
     }
 
     #[test]
@@ -508,7 +517,10 @@ Truth.
         let result = parse_page(raw, "unicode-\u{00e9}");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("invalid characters"), "expected invalid slug error, got: {err}");
+        assert!(
+            err.contains("invalid characters"),
+            "expected invalid slug error, got: {err}"
+        );
     }
 
     #[test]
@@ -788,7 +800,10 @@ Before fence.
 ";
         let page = parse_page(raw, "unclosed").unwrap();
 
-        assert!(page.timeline.is_empty(), "unclosed fence should hide --- and timeline entries");
+        assert!(
+            page.timeline.is_empty(),
+            "unclosed fence should hide --- and timeline entries"
+        );
         assert!(
             page.compiled_truth.contains("Before fence."),
             "compiled_truth should contain text before the fence"
@@ -833,7 +848,10 @@ sources: []
         assert_eq!(page.timeline.len(), 1);
         assert_eq!(page.timeline[0].date, "2024-06-15");
         assert_eq!(page.timeline[0].content, "entry");
-        assert_eq!(page.timeline[0].source_url, Some("https://source.com".to_string()));
+        assert_eq!(
+            page.timeline[0].source_url,
+            Some("https://source.com".to_string())
+        );
         assert_eq!(page.timeline[0].agent, None);
     }
 
@@ -845,7 +863,10 @@ sources: []
             agent: Some("claude".to_string()),
             source_url: None,
         };
-        assert_eq!(format_timeline_entry(&entry), "- 2026-05-09 [claude]: update");
+        assert_eq!(
+            format_timeline_entry(&entry),
+            "- 2026-05-09 [claude]: update"
+        );
     }
 
     #[test]
@@ -856,7 +877,10 @@ sources: []
             agent: None,
             source_url: Some("https://source.com".to_string()),
         };
-        assert_eq!(format_timeline_entry(&entry), "- 2024-06-15 [https://source.com]: entry");
+        assert_eq!(
+            format_timeline_entry(&entry),
+            "- 2024-06-15 [https://source.com]: entry"
+        );
     }
 
     #[test]

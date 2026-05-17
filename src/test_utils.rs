@@ -114,11 +114,7 @@ pub async fn test_registry_for_server(server_uri: &str) -> OperationRegistry {
 #[cfg(test)]
 pub async fn setup_test_fns_and_index() -> (FnsClient, IndexEngine, wiremock::MockServer) {
     let server = wiremock::MockServer::start().await;
-    let fns = FnsClient::new(
-        server.uri(),
-        "test-token".into(),
-        "test-vault".into(),
-    );
+    let fns = FnsClient::new(server.uri(), "test-token".into(), "test-vault".into());
     let index = IndexEngine::new("sqlite::memory:")
         .await
         .expect("in-memory index");

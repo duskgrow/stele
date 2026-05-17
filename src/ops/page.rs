@@ -157,7 +157,10 @@ pub async fn handle_page_list(fns: &FnsClient, dir: Option<&str>) -> Result<serd
     let (files, folders) = tokio::join!(fns.list_notes(dir), fns.list_folders(dir),);
 
     let files: Vec<String> = files?.into_iter().filter(|p| !is_hidden_path(p)).collect();
-    let folders: Vec<String> = folders?.into_iter().filter(|p| !is_hidden_path(p)).collect();
+    let folders: Vec<String> = folders?
+        .into_iter()
+        .filter(|p| !is_hidden_path(p))
+        .collect();
     let count = files.len() + folders.len();
 
     Ok(json!({

@@ -1,6 +1,6 @@
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
 pub struct StatsHandler;
@@ -21,8 +21,12 @@ impl OpExec for StatsOp {
 }
 
 impl OpHandler for StatsHandler {
-    fn name(&self) -> &'static str { "stats" }
-    fn description(&self) -> &'static str { "Get index statistics" }
+    fn name(&self) -> &'static str {
+        "stats"
+    }
+    fn description(&self) -> &'static str {
+        "Get index statistics"
+    }
 
     fn input_schema(&self) -> Value {
         json!({
@@ -30,16 +34,21 @@ impl OpHandler for StatsHandler {
         })
     }
 
-    fn from_mcp_args(&self, _args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+    fn from_mcp_args(
+        &self,
+        _args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         Ok(Box::new(StatsOp))
     }
 
     fn cli_command(&self) -> clap::Command {
-        clap::Command::new("stats")
-            .about("Get index statistics")
+        clap::Command::new("stats").about("Get index statistics")
     }
 
-    fn from_cli_matches(&self, _matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
+    fn from_cli_matches(
+        &self,
+        _matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         Ok(Box::new(StatsOp))
     }
 }
@@ -66,7 +75,9 @@ mod tests {
     #[test]
     fn test_stats_from_mcp_args() {
         let handler = StatsHandler;
-        let exec = handler.from_mcp_args(None).expect("from_mcp_args should succeed");
+        let exec = handler
+            .from_mcp_args(None)
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
@@ -76,6 +87,10 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"stats"), "stats should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"stats"),
+            "stats should be in inventory, found: {:?}",
+            names
+        );
     }
 }

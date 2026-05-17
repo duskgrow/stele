@@ -19,7 +19,10 @@ pub struct MaintainResult {
     pub issues_found: Vec<MaintainIssue>,
 }
 
-pub async fn handle_maintain(index: &IndexEngine, scope: Option<&str>) -> Result<serde_json::Value> {
+pub async fn handle_maintain(
+    index: &IndexEngine,
+    scope: Option<&str>,
+) -> Result<serde_json::Value> {
     let scope = scope.unwrap_or("full");
 
     let mut all_issues = Vec::new();
@@ -117,7 +120,6 @@ async fn run_lint(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
 
     Ok(issues)
 }
-
 
 async fn run_orphans(index: &IndexEngine) -> Result<Vec<MaintainIssue>> {
     let orphans = graph::find_orphans(index.pool()).await?;
@@ -221,9 +223,15 @@ mod tests {
 
         let has_slug_issue = issues.iter().any(|i| {
             i["scope"] == "lint"
-                && i["message"].as_str().unwrap().contains("invalid slug format")
+                && i["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("invalid slug format")
         });
-        assert!(!has_slug_issue, "valid path-style slugs should not be flagged");
+        assert!(
+            !has_slug_issue,
+            "valid path-style slugs should not be flagged"
+        );
     }
 
     #[tokio::test]
@@ -240,7 +248,10 @@ mod tests {
         let has_slug_issue = issues.iter().any(|i| {
             i["scope"] == "lint"
                 && i["severity"] == "error"
-                && i["message"].as_str().unwrap().contains("invalid slug format")
+                && i["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("invalid slug format")
         });
         assert!(has_slug_issue, "invalid slug should be flagged");
     }
@@ -277,8 +288,7 @@ mod tests {
         let issues = result["issues"].as_array().unwrap();
 
         let has_empty_sources = issues.iter().any(|i| {
-            i["scope"] == "lint"
-                && i["message"].as_str().unwrap().contains("empty sources")
+            i["scope"] == "lint" && i["message"].as_str().unwrap().contains("empty sources")
         });
         assert!(
             !has_empty_sources,
@@ -354,10 +364,7 @@ mod tests {
             .iter()
             .map(|i| {
                 let msg = i["message"].as_str().unwrap();
-                msg.split("'")
-                    .nth(1)
-                    .unwrap()
-                    .to_string()
+                msg.split("'").nth(1).unwrap().to_string()
             })
             .collect();
 
@@ -387,10 +394,12 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0]["severity"], "error");
         assert_eq!(issues[0]["scope"], "backlinks");
-        assert!(issues[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("nonexistent-page"));
+        assert!(
+            issues[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("nonexistent-page")
+        );
     }
 
     #[tokio::test]
@@ -412,7 +421,11 @@ mod tests {
 
         let result = handle_maintain(&index, Some("backlinks")).await.unwrap();
         let issues = result["issues"].as_array().unwrap();
-        assert_eq!(issues.len(), 0, "valid links should not be reported as broken");
+        assert_eq!(
+            issues.len(),
+            0,
+            "valid links should not be reported as broken"
+        );
     }
 
     #[tokio::test]
@@ -430,9 +443,15 @@ mod tests {
         let issues = result["issues"].as_array().unwrap();
         assert!(!issues.is_empty(), "full scope should find issues");
 
-        let scopes: HashSet<String> = issues.iter().map(|i| i["scope"].as_str().unwrap().to_string()).collect();
+        let scopes: HashSet<String> = issues
+            .iter()
+            .map(|i| i["scope"].as_str().unwrap().to_string())
+            .collect();
         assert!(scopes.contains("lint"), "full should include lint issues");
-        assert!(scopes.contains("orphans"), "full should include orphan issues");
+        assert!(
+            scopes.contains("orphans"),
+            "full should include orphan issues"
+        );
     }
 
     #[tokio::test]

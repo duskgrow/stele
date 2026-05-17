@@ -120,7 +120,11 @@ fn parse_wikilink(inner: &str) -> Option<Link> {
     let (body, display) = match inner.find('|') {
         Some(pos) => {
             let d = inner[pos + 1..].trim();
-            let d = if d.is_empty() { None } else { Some(d.to_string()) };
+            let d = if d.is_empty() {
+                None
+            } else {
+                Some(d.to_string())
+            };
             (&inner[..pos], d)
         }
         None => (inner, None),
@@ -206,7 +210,8 @@ mod tests {
 
     #[test]
     fn test_multiple_links() {
-        let links = extract_links("First [[page-a]] and second [[page-b]] and third [[type::page-c]].");
+        let links =
+            extract_links("First [[page-a]] and second [[page-b]] and third [[type::page-c]].");
         assert_eq!(links.len(), 3);
         assert_eq!(links[0].target_slug, "page-a");
         assert_eq!(links[1].target_slug, "page-b");

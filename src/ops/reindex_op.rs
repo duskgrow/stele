@@ -1,6 +1,6 @@
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 
 /// Handler struct registered with inventory.
 pub struct ReindexHandler;
@@ -21,25 +21,34 @@ impl OpExec for ReindexOp {
 }
 
 impl OpHandler for ReindexHandler {
-    fn name(&self) -> &'static str { "reindex" }
-    fn description(&self) -> &'static str { "Rebuild the full-text search index" }
-    
+    fn name(&self) -> &'static str {
+        "reindex"
+    }
+    fn description(&self) -> &'static str {
+        "Rebuild the full-text search index"
+    }
+
     fn input_schema(&self) -> Value {
         json!({
             "type": "object"
         })
     }
-    
-    fn from_mcp_args(&self, _args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_mcp_args(
+        &self,
+        _args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         Ok(Box::new(ReindexOp))
     }
-    
+
     fn cli_command(&self) -> clap::Command {
-        clap::Command::new("reindex")
-            .about("Rebuild search index")
+        clap::Command::new("reindex").about("Rebuild search index")
     }
-    
-    fn from_cli_matches(&self, _matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
+
+    fn from_cli_matches(
+        &self,
+        _matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         Ok(Box::new(ReindexOp))
     }
 }
@@ -66,7 +75,9 @@ mod tests {
     #[test]
     fn test_reindex_from_mcp_args() {
         let handler = ReindexHandler;
-        let exec = handler.from_mcp_args(None).expect("from_mcp_args should succeed");
+        let exec = handler
+            .from_mcp_args(None)
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
@@ -76,6 +87,10 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"reindex"), "reindex should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"reindex"),
+            "reindex should be in inventory, found: {:?}",
+            names
+        );
     }
 }

@@ -27,11 +27,19 @@ pub(crate) fn build_cli() -> Command {
         .subcommand(
             Command::new("serve")
                 .about("Start the MCP server")
-                .arg(Arg::new("transport").long("transport").default_value("stdio"))
+                .arg(
+                    Arg::new("transport")
+                        .long("transport")
+                        .default_value("stdio"),
+                )
                 .arg(Arg::new("host").long("host").default_value("127.0.0.1"))
-                .arg(Arg::new("port").long("port").value_parser(clap::value_parser!(u16)).default_value("3000"))
-        )
-        ;
+                .arg(
+                    Arg::new("port")
+                        .long("port")
+                        .value_parser(clap::value_parser!(u16))
+                        .default_value("3000"),
+                ),
+        );
 
     for (prefix, handlers) in &groups {
         let mut parent = Command::new(*prefix).about(format!("{} operations", prefix));
@@ -56,7 +64,10 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
         Ok(m) => m,
         Err(e) => {
             let err_json = json!({"error": e.to_string()});
-            eprintln!("{}", serde_json::to_string_pretty(&err_json).unwrap_or_default());
+            eprintln!(
+                "{}",
+                serde_json::to_string_pretty(&err_json).unwrap_or_default()
+            );
             std::process::exit(1);
         }
     };
@@ -78,7 +89,8 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
                 .find(|h| h.name() == name)
                 .copied()
             {
-                let op = handler.from_cli_matches(sub_matches)
+                let op = handler
+                    .from_cli_matches(sub_matches)
                     .map_err(|e| crate::types::Error::Config(e.to_string()))?;
                 registry.execute_op(op).await
             } else if let Some((sub_name, sub_sub_matches)) = sub_matches.subcommand() {
@@ -87,12 +99,18 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
                     .into_iter()
                     .find(|h| h.name() == full_name)
                     .copied()
-                    .ok_or_else(|| crate::types::Error::Config(format!("unknown op: {}", full_name)))?;
-                let op = handler.from_cli_matches(sub_sub_matches)
+                    .ok_or_else(|| {
+                        crate::types::Error::Config(format!("unknown op: {}", full_name))
+                    })?;
+                let op = handler
+                    .from_cli_matches(sub_sub_matches)
                     .map_err(|e| crate::types::Error::Config(e.to_string()))?;
                 registry.execute_op(op).await
             } else {
-                Err(crate::types::Error::Config(format!("unknown command: {}", name)))
+                Err(crate::types::Error::Config(format!(
+                    "unknown command: {}",
+                    name
+                )))
             };
 
             match result {
@@ -102,7 +120,10 @@ pub async fn run_cli(registry: Arc<OperationRegistry>) -> Result<()> {
                 }
                 Err(e) => {
                     let err_json = json!({"error": e.to_string()});
-                    eprintln!("{}", serde_json::to_string_pretty(&err_json).unwrap_or_default());
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string_pretty(&err_json).unwrap_or_default()
+                    );
                     std::process::exit(1);
                 }
             }
@@ -121,7 +142,9 @@ mod tests {
     #[test]
     fn test_cli_parses_serve() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(["stele", "serve", "--transport", "http", "--port", "8080"]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(["stele", "serve", "--transport", "http", "--port", "8080"])
+            .unwrap();
         match matches.subcommand() {
             Some(("serve", args)) => {
                 assert_eq!(args.get_one::<String>("transport").unwrap(), "http");
@@ -147,16 +170,19 @@ mod tests {
     #[test]
     fn test_cli_parses_page_get() {
         let cmd = build_cli();
-        let matches = cmd.try_get_matches_from(["stele", "page", "get", "hello-world"]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(["stele", "page", "get", "hello-world"])
+            .unwrap();
         match matches.subcommand() {
-            Some(("page", page_matches)) => {
-                match page_matches.subcommand() {
-                    Some(("get", get_matches)) => {
-                        assert_eq!(get_matches.get_one::<String>("slug").unwrap(), "hello-world");
-                    }
-                    other => panic!("expected get, got {:?}", other),
+            Some(("page", page_matches)) => match page_matches.subcommand() {
+                Some(("get", get_matches)) => {
+                    assert_eq!(
+                        get_matches.get_one::<String>("slug").unwrap(),
+                        "hello-world"
+                    );
                 }
-            }
+                other => panic!("expected get, got {:?}", other),
+            },
             other => panic!("expected page, got {:?}", other),
         }
     }
@@ -168,7 +194,11 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("Stele CLI"), "help should mention 'Stele CLI': {}", msg);
+        assert!(
+            msg.contains("Stele CLI"),
+            "help should mention 'Stele CLI': {}",
+            msg
+        );
     }
 
     #[test]
@@ -193,7 +223,13 @@ mod tests {
         let page_help = String::from_utf8(page_buf).unwrap();
         assert!(page_help.contains("get"), "page help should contain 'get'");
         assert!(page_help.contains("put"), "page help should contain 'put'");
-        assert!(page_help.contains("delete"), "page help should contain 'delete'");
-        assert!(page_help.contains("list"), "page help should contain 'list'");
+        assert!(
+            page_help.contains("delete"),
+            "page help should contain 'delete'"
+        );
+        assert!(
+            page_help.contains("list"),
+            "page help should contain 'list'"
+        );
     }
 }

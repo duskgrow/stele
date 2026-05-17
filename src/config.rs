@@ -277,12 +277,16 @@ port = 7777
         .unwrap();
 
         let path = file.path().to_str().unwrap().to_string();
-        unsafe { std::env::set_var("STELE_CONFIG", &path); }
+        unsafe {
+            std::env::set_var("STELE_CONFIG", &path);
+        }
 
         let cfg = Config::load().unwrap();
         assert_eq!(cfg.server.host, "from.stele.config");
         assert_eq!(cfg.server.port, 7777);
 
-        unsafe { std::env::remove_var("STELE_CONFIG"); }
+        unsafe {
+            std::env::remove_var("STELE_CONFIG");
+        }
     }
 }

@@ -89,9 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_server_start_and_initialize() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let port = addr.port();
 
@@ -195,9 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_origin_validation_rejects_non_localhost() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let port = addr.port();
 

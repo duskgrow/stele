@@ -88,7 +88,10 @@ pub async fn keyword_search(
             .collect()),
         Err(e) => {
             let err_str = e.to_string();
-            if err_str.contains("fts5") || err_str.contains("malformed") || err_str.contains("MATCH") {
+            if err_str.contains("fts5")
+                || err_str.contains("malformed")
+                || err_str.contains("MATCH")
+            {
                 warn!("Invalid FTS5 query '{}': {}", sanitized, e);
                 Ok(Vec::new())
             } else {
@@ -191,10 +194,7 @@ mod tests {
             END;
         "#;
 
-        sqlx::raw_sql(schema)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::raw_sql(schema).execute(&pool).await.unwrap();
 
         pool
     }
@@ -256,7 +256,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "Programming", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "Programming", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "rust-page");
         assert_eq!(results[0].title, "Rust Programming Language");
@@ -273,7 +275,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "systems", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "systems", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "rust-page");
     }
@@ -296,7 +300,9 @@ mod tests {
         index_page(&pool, &page1).await;
         index_page(&pool, &page2).await;
 
-        let results = keyword_search(&pool, "page", 10, Some("Entity"), None).await.unwrap();
+        let results = keyword_search(&pool, "page", 10, Some("Entity"), None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "entity-page");
     }
@@ -314,7 +320,9 @@ mod tests {
             index_page(&pool, &page).await;
         }
 
-        let results = keyword_search(&pool, "Common", 2, None, None).await.unwrap();
+        let results = keyword_search(&pool, "Common", 2, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -337,7 +345,9 @@ mod tests {
         let page = sample_page("test", "Test", PageType::Concept, "Content");
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "nonexistent", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "nonexistent", 10, None, None)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -353,12 +363,16 @@ mod tests {
         index_page(&pool, &page).await;
 
         // "用于验证" is an exact substring of compiled_truth
-        let results = keyword_search(&pool, "用于验证", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "用于验证", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "test-page");
 
         // "接口的" is also an exact substring
-        let results = keyword_search(&pool, "接口的", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "接口的", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -448,7 +462,9 @@ mod tests {
         index_page(&pool, &page_body).await;
         index_page(&pool, &page_title).await;
 
-        let results = keyword_search(&pool, "keyword", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "keyword", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].slug, "title-match");
         assert_eq!(results[1].slug, "body-match");
@@ -479,7 +495,9 @@ mod tests {
             index_page(&pool, &page).await;
         }
 
-        let results = keyword_search(&pool, "Common", 200, None, None).await.unwrap();
+        let results = keyword_search(&pool, "Common", 200, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 5);
     }
 
@@ -492,7 +510,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_hyphen_quoted() {
-        assert_eq!(sanitize_fts5_query("test-stele-verify"), "\"test-stele-verify\"");
+        assert_eq!(
+            sanitize_fts5_query("test-stele-verify"),
+            "\"test-stele-verify\""
+        );
     }
 
     #[test]
@@ -513,7 +534,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "测试记录", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "测试记录", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "cjk-page");
     }
@@ -529,7 +552,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "接口验证", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "接口验证", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "cjk-exact");
     }
@@ -545,7 +570,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "世界欢", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "世界欢", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "mixed-page");
     }
@@ -561,7 +588,9 @@ mod tests {
         );
         index_page(&pool, &page).await;
 
-        let results = keyword_search(&pool, "verification", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "verification", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].slug, "full-cjk");
     }
@@ -574,7 +603,9 @@ mod tests {
         index_page(&pool, &page1).await;
         index_page(&pool, &page2).await;
 
-        let results = keyword_search(&pool, "Rust OR Python", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "Rust OR Python", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -597,13 +628,17 @@ mod tests {
         index_page(&pool, &page_title).await;
 
         // Default (None) should use BM25 relevance — title match ranks higher
-        let results = keyword_search(&pool, "keyword", 10, None, None).await.unwrap();
+        let results = keyword_search(&pool, "keyword", 10, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].slug, "title-match");
         assert_eq!(results[1].slug, "body-match");
 
         // Explicit "relevance" should also use BM25
-        let results = keyword_search(&pool, "keyword", 10, None, Some("relevance")).await.unwrap();
+        let results = keyword_search(&pool, "keyword", 10, None, Some("relevance"))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].slug, "title-match");
         assert_eq!(results[1].slug, "body-match");
@@ -627,7 +662,9 @@ mod tests {
         index_page_with_date(&pool, &page_old, "2024-01-01T00:00:00Z").await;
         index_page_with_date(&pool, &page_new, "2024-06-15T00:00:00Z").await;
 
-        let results = keyword_search(&pool, "date sorting", 10, None, Some("date")).await.unwrap();
+        let results = keyword_search(&pool, "date sorting", 10, None, Some("date"))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].slug, "new-page");
         assert_eq!(results[1].slug, "old-page");
@@ -651,7 +688,9 @@ mod tests {
         index_page(&pool, &page_b).await;
         index_page(&pool, &page_a).await;
 
-        let results = keyword_search(&pool, "title sorting", 10, None, Some("title")).await.unwrap();
+        let results = keyword_search(&pool, "title sorting", 10, None, Some("title"))
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].slug, "page-a");
         assert_eq!(results[1].slug, "page-b");

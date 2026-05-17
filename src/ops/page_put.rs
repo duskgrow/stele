@@ -1,8 +1,8 @@
-use async_trait::async_trait;
-use serde_json::{Value, json};
-use crate::ops::handler::{OpHandler, OpExec, OperationContext};
+use crate::ops::handler::{OpExec, OpHandler, OperationContext};
 use crate::types::TimelineAppendInput;
 use crate::types::page::PageType;
+use async_trait::async_trait;
+use serde_json::{Value, json};
 
 /// Handler struct registered with inventory.
 pub struct PagePutHandler;
@@ -56,8 +56,12 @@ impl OpExec for PagePutOp {
 }
 
 impl OpHandler for PagePutHandler {
-    fn name(&self) -> &'static str { "page.put" }
-    fn description(&self) -> &'static str { "Create or update a page with structured input" }
+    fn name(&self) -> &'static str {
+        "page.put"
+    }
+    fn description(&self) -> &'static str {
+        "Create or update a page with structured input"
+    }
 
     fn input_schema(&self) -> Value {
         json!({
@@ -93,22 +97,28 @@ impl OpHandler for PagePutHandler {
         })
     }
 
-    fn from_mcp_args(&self, args: Option<serde_json::Map<String, Value>>) -> Result<Box<dyn OpExec>, anyhow::Error> {
+    fn from_mcp_args(
+        &self,
+        args: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
         let args = args.unwrap_or_default();
 
-        let slug = args.get("slug")
+        let slug = args
+            .get("slug")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("missing required field: slug"))?
             .to_string();
 
-        let body = args.get("body")
+        let body = args
+            .get("body")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("missing required field: body"))?
             .to_string();
 
         let frontmatter_updates = args.get("frontmatter").cloned();
 
-        let timeline_obj = args.get("timeline")
+        let timeline_obj = args
+            .get("timeline")
             .ok_or_else(|| anyhow::anyhow!("missing required field: timeline"))?;
 
         let timeline_content = timeline_obj
@@ -122,7 +132,8 @@ impl OpHandler for PagePutHandler {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let etag = args.get("etag")
+        let etag = args
+            .get("etag")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -142,39 +153,58 @@ impl OpHandler for PagePutHandler {
         clap::Command::new("put")
             .about("Create or update a page")
             .arg(clap::Arg::new("slug").required(true))
-            .arg(clap::Arg::new("content")
-                .long("content")
-                .value_name("TEXT")
-                .help("Body content as text"))
-            .arg(clap::Arg::new("file")
-                .long("file")
-                .value_name("PATH")
-                .help("Body content from file"))
-            .arg(clap::Arg::new("frontmatter")
-                .long("frontmatter")
-                .value_name("JSON")
-                .help("Frontmatter updates as JSON"))
-            .arg(clap::Arg::new("timeline-content")
-                .long("timeline-content")
-                .value_name("TEXT")
-                .required(true)
-                .help("Timeline entry content (required)"))
-            .arg(clap::Arg::new("timeline-agent")
-                .long("timeline-agent")
-                .value_name("AGENT")
-                .help("Timeline entry agent name"))
-            .arg(clap::Arg::new("etag")
-                .long("etag")
-                .value_name("ETAG")
-                .help("Expected content hash for optimistic concurrency"))
+            .arg(
+                clap::Arg::new("content")
+                    .long("content")
+                    .value_name("TEXT")
+                    .help("Body content as text"),
+            )
+            .arg(
+                clap::Arg::new("file")
+                    .long("file")
+                    .value_name("PATH")
+                    .help("Body content from file"),
+            )
+            .arg(
+                clap::Arg::new("frontmatter")
+                    .long("frontmatter")
+                    .value_name("JSON")
+                    .help("Frontmatter updates as JSON"),
+            )
+            .arg(
+                clap::Arg::new("timeline-content")
+                    .long("timeline-content")
+                    .value_name("TEXT")
+                    .required(true)
+                    .help("Timeline entry content (required)"),
+            )
+            .arg(
+                clap::Arg::new("timeline-agent")
+                    .long("timeline-agent")
+                    .value_name("AGENT")
+                    .help("Timeline entry agent name"),
+            )
+            .arg(
+                clap::Arg::new("etag")
+                    .long("etag")
+                    .value_name("ETAG")
+                    .help("Expected content hash for optimistic concurrency"),
+            )
     }
 
-    fn from_cli_matches(&self, matches: &clap::ArgMatches) -> Result<Box<dyn OpExec>, anyhow::Error> {
-        let slug = matches.get_one::<String>("slug")
+    fn from_cli_matches(
+        &self,
+        matches: &clap::ArgMatches,
+    ) -> Result<Box<dyn OpExec>, anyhow::Error> {
+        let slug = matches
+            .get_one::<String>("slug")
             .ok_or_else(|| anyhow::anyhow!("missing required argument: slug"))?
             .clone();
 
-        let body = match (matches.get_one::<String>("file"), matches.get_one::<String>("content")) {
+        let body = match (
+            matches.get_one::<String>("file"),
+            matches.get_one::<String>("content"),
+        ) {
             (Some(path), None) => std::fs::read_to_string(path)?,
             (None, Some(text)) => text.clone(),
             (Some(_), Some(_)) => {
@@ -193,7 +223,8 @@ impl OpHandler for PagePutHandler {
             None => None,
         };
 
-        let timeline_content = matches.get_one::<String>("timeline-content")
+        let timeline_content = matches
+            .get_one::<String>("timeline-content")
             .ok_or_else(|| anyhow::anyhow!("missing required argument: timeline-content"))?
             .clone();
 
@@ -250,15 +281,23 @@ mod tests {
         let handler = PagePutHandler;
         let mut args = serde_json::Map::new();
         args.insert("slug".to_string(), Value::String("test-page".to_string()));
-        args.insert("body".to_string(), Value::String("Body content".to_string()));
-        args.insert("frontmatter".to_string(), json!({"title": "Test", "status": "Budding"}));
+        args.insert(
+            "body".to_string(),
+            Value::String("Body content".to_string()),
+        );
+        args.insert(
+            "frontmatter".to_string(),
+            json!({"title": "Test", "status": "Budding"}),
+        );
         let mut timeline = serde_json::Map::new();
         timeline.insert("content".to_string(), Value::String("Updated".to_string()));
         timeline.insert("agent".to_string(), Value::String("claude".to_string()));
         args.insert("timeline".to_string(), Value::Object(timeline));
         args.insert("etag".to_string(), Value::String("abc123".to_string()));
 
-        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let exec = handler
+            .from_mcp_args(Some(args))
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
@@ -269,10 +308,15 @@ mod tests {
         args.insert("slug".to_string(), Value::String("test-page".to_string()));
         args.insert("body".to_string(), Value::String("# Hello".to_string()));
         let mut timeline = serde_json::Map::new();
-        timeline.insert("content".to_string(), Value::String("Created page".to_string()));
+        timeline.insert(
+            "content".to_string(),
+            Value::String("Created page".to_string()),
+        );
         args.insert("timeline".to_string(), Value::Object(timeline));
 
-        let exec = handler.from_mcp_args(Some(args)).expect("from_mcp_args should succeed");
+        let exec = handler
+            .from_mcp_args(Some(args))
+            .expect("from_mcp_args should succeed");
         let _ = exec;
     }
 
@@ -289,7 +333,10 @@ mod tests {
             Err(e) => e.to_string(),
             Ok(_) => panic!("expected error"),
         };
-        assert!(err.contains("missing required field: timeline"), "expected timeline error, got: {err}");
+        assert!(
+            err.contains("missing required field: timeline"),
+            "expected timeline error, got: {err}"
+        );
     }
 
     #[test]
@@ -298,7 +345,11 @@ mod tests {
             .into_iter()
             .collect();
         let names: Vec<&str> = handlers.iter().map(|h| h.name()).collect();
-        assert!(names.contains(&"page.put"), "page.put should be in inventory, found: {:?}", names);
+        assert!(
+            names.contains(&"page.put"),
+            "page.put should be in inventory, found: {:?}",
+            names
+        );
     }
 
     #[test]
@@ -320,8 +371,14 @@ mod tests {
         let result = validate_page_type(&fm);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("invalid page_type: 'InvalidType'"), "expected invalid page_type error, got: {err}");
-        assert!(err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))), "expected valid types list, got: {err}");
+        assert!(
+            err.contains("invalid page_type: 'InvalidType'"),
+            "expected invalid page_type error, got: {err}"
+        );
+        assert!(
+            err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))),
+            "expected valid types list, got: {err}"
+        );
     }
 
     #[test]
@@ -358,8 +415,14 @@ mod tests {
         let result = op.execute(&ctx).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("invalid page_type: 'InvalidType'"), "expected invalid page_type error, got: {err}");
-        assert!(err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))), "expected valid types list, got: {err}");
+        assert!(
+            err.contains("invalid page_type: 'InvalidType'"),
+            "expected invalid page_type error, got: {err}"
+        );
+        assert!(
+            err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))),
+            "expected valid types list, got: {err}"
+        );
     }
 
     #[tokio::test]

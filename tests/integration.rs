@@ -51,10 +51,7 @@ fn sample_markdown(title: &str, body: &str) -> String {
 }
 
 fn sample_markdown_with_link(target: &str) -> String {
-    sample_markdown(
-        "Link Page",
-        &format!("This references [[{}]].", target),
-    )
+    sample_markdown("Link Page", &format!("This references [[{}]].", target))
 }
 
 fn fns_string_response(data: &str) -> serde_json::Value {
@@ -75,9 +72,7 @@ async fn setup_note_get_mock(server: &MockServer, slug: &str, content: &str) {
         .and(path("/api/note"))
         .and(query_param("vault", "test-vault"))
         .and(query_param("path", fns_path))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_string_response(content)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(content)))
         .mount(server)
         .await;
 }
@@ -87,7 +82,7 @@ fn sample_frontmatter(title: &str) -> serde_json::Value {
         "title": title,
         "page_type": "Entity",
         "tags": ["test"],
-        
+
         "sources": [],
         "visibility": "shared"
     })
@@ -103,9 +98,7 @@ async fn setup_note_put_mock(server: &MockServer, _slug: &str) {
 
     Mock::given(method("POST"))
         .and(path("/api/note"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_success_response()),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_success_response()))
         .mount(server)
         .await;
 }
@@ -113,18 +106,13 @@ async fn setup_note_put_mock(server: &MockServer, _slug: &str) {
 async fn setup_note_delete_mock(server: &MockServer, _slug: &str) {
     Mock::given(method("DELETE"))
         .and(path("/api/note"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_success_response()),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_success_response()))
         .mount(server)
         .await;
 }
 
 async fn setup_list_mock(server: &MockServer, files: &[&str]) {
-    let list_items: Vec<serde_json::Value> = files
-        .iter()
-        .map(|f| json!({"path": f}))
-        .collect();
+    let list_items: Vec<serde_json::Value> = files.iter().map(|f| json!({"path": f})).collect();
     let total = files.len();
     let response_data = json!({
         "list": list_items,
@@ -133,24 +121,21 @@ async fn setup_list_mock(server: &MockServer, files: &[&str]) {
     Mock::given(method("GET"))
         .and(path("/api/folder/notes"))
         .and(query_param("vault", "test-vault"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": response_data})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 1, "status": true, "message": "Success", "data": response_data}),
+        ))
         .mount(server)
         .await;
 }
 
 async fn setup_folders_mock(server: &MockServer, folders: &[&str]) {
-    let folder_items: Vec<serde_json::Value> = folders
-        .iter()
-        .map(|f| json!({"path": f}))
-        .collect();
+    let folder_items: Vec<serde_json::Value> = folders.iter().map(|f| json!({"path": f})).collect();
     Mock::given(method("GET"))
         .and(path("/api/folders"))
         .and(query_param("vault", "test-vault"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"code": 1, "status": true, "message": "Success", "data": folder_items})),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 1, "status": true, "message": "Success", "data": folder_items}),
+        ))
         .mount(server)
         .await;
 }
@@ -224,7 +209,10 @@ async fn test_page_put_then_get_roundtrip() {
     assert_eq!(put_result["indexed"], true);
 
     let get_result = reg
-        .execute_mcp("page.get", Some(json!({"slug": "test-page"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.get",
+            Some(json!({"slug": "test-page"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("get should succeed");
     assert_eq!(get_result["slug"], "test-page");
@@ -248,7 +236,15 @@ async fn test_page_put_auto_indexes() {
     .expect("put should succeed");
 
     let search_result = reg
-        .execute_mcp("search", Some(json!({"query": "rust", "limit": 10}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "search",
+            Some(
+                json!({"query": "rust", "limit": 10})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("search should succeed");
     assert!(search_result["total"].as_u64().unwrap() >= 1);
@@ -272,7 +268,15 @@ async fn test_page_put_extracts_wikilinks() {
     assert!(put_result["links_count"].as_u64().unwrap() >= 1);
 
     let backlinks = reg
-        .execute_mcp("graph.query", Some(json!({"slug": "target-page", "direction": "in"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "graph.query",
+            Some(
+                json!({"slug": "target-page", "direction": "in"})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("graph.query should succeed");
     assert!(!backlinks["outlinks"].as_array().unwrap().is_empty());
@@ -301,7 +305,10 @@ async fn test_page_delete_removes_from_index() {
     assert!(stats_before["total_pages"].as_i64().unwrap() >= 1);
 
     let del_result = reg
-        .execute_mcp("page.delete", Some(json!({"slug": "delete-me"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.delete",
+            Some(json!({"slug": "delete-me"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("delete should succeed");
     assert_eq!(del_result["deleted"], true);
@@ -350,7 +357,15 @@ async fn test_search_finds_indexed_page() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute_mcp("search", Some(json!({"query": "quantum", "limit": 10}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "search",
+            Some(
+                json!({"query": "quantum", "limit": 10})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("search should succeed");
 
@@ -382,7 +397,15 @@ async fn test_search_type_filter() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute_mcp("search", Some(json!({"query": "rust", "limit": 10, "type_filter": "Entity"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "search",
+            Some(
+                json!({"query": "rust", "limit": 10, "type_filter": "Entity"})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("search should succeed");
 
@@ -416,7 +439,15 @@ async fn test_graph_query_returns_outlinks() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute_mcp("graph.query", Some(json!({"slug": "page-a", "depth": 1}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "graph.query",
+            Some(
+                json!({"slug": "page-a", "depth": 1})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("graph query should succeed");
 
@@ -480,9 +511,7 @@ async fn test_sync_removes_deleted_pages() {
     Mock::given(method("GET"))
         .and(path("/api/note"))
         .and(query_param("path", "keep.md"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)))
         .up_to_n_times(1)
         .mount(&server)
         .await;
@@ -490,9 +519,7 @@ async fn test_sync_removes_deleted_pages() {
     Mock::given(method("GET"))
         .and(path("/api/note"))
         .and(query_param("path", "remove.md"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_remove)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&md_remove)))
         .up_to_n_times(1)
         .mount(&server)
         .await;
@@ -515,9 +542,7 @@ async fn test_sync_removes_deleted_pages() {
     Mock::given(method("GET"))
         .and(path("/api/note"))
         .and(query_param("path", "keep.md"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&md_keep)))
         .mount(&server)
         .await;
 
@@ -559,7 +584,10 @@ async fn test_maintain_detects_orphans() {
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
     let result = reg
-        .execute_mcp("maintain", Some(json!({"scope": "orphans"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "maintain",
+            Some(json!({"scope": "orphans"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("maintain should succeed");
 
@@ -602,7 +630,10 @@ async fn test_stats_returns_counts() {
     let config = test_config(&server.uri());
     let reg = OperationRegistry::new(fns, Arc::new(index), config);
 
-    let result = reg.execute_mcp("stats", None).await.expect("stats should succeed");
+    let result = reg
+        .execute_mcp("stats", None)
+        .await
+        .expect("stats should succeed");
 
     assert_eq!(result["total_pages"], 3);
     assert!(result["total_links"].as_i64().unwrap() >= 1);
@@ -643,7 +674,6 @@ async fn test_page_etag_conflict() {
     let server = MockServer::start().await;
     let reg = test_registry(&server.uri()).await;
 
-
     setup_note_put_mock(&server, "etag-page").await;
 
     reg.execute_mcp("page.put", Some(json!({"slug": "etag-page", "body": "Content.\n", "frontmatter": sample_frontmatter("Etag Page"), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
@@ -676,7 +706,10 @@ async fn test_fns_error_propagates() {
         .await;
 
     let result = reg
-        .execute_mcp("page.get", Some(json!({"slug": "nonexistent"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.get",
+            Some(json!({"slug": "nonexistent"}).as_object().cloned().unwrap()),
+        )
         .await;
 
     assert!(result.is_err());
@@ -713,7 +746,15 @@ async fn test_structured_api_roundtrip() {
     setup_note_get_mock(&server, "structured-test", &content_with_timeline).await;
 
     let get_result = reg
-        .execute_mcp("page.get", Some(json!({"slug": "structured-test"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.get",
+            Some(
+                json!({"slug": "structured-test"})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("get should succeed");
 
@@ -743,7 +784,8 @@ async fn test_timeline_append_only() {
         .expect("first put should succeed");
     assert_eq!(result1["timeline_count"], 1);
 
-    let content_1 = markdown_with_timeline("Timeline Test", "Initial body.", &[( &today, "First entry")]);
+    let content_1 =
+        markdown_with_timeline("Timeline Test", "Initial body.", &[(&today, "First entry")]);
     Mock::given(method("GET"))
         .and(path("/api/note"))
         .and(query_param("vault", "test-vault"))
@@ -762,12 +804,20 @@ async fn test_timeline_append_only() {
     let content_2 = markdown_with_timeline(
         "Timeline Test",
         "Updated body.",
-        &[( &today, "First entry"), ( &today, "Second entry")],
+        &[(&today, "First entry"), (&today, "Second entry")],
     );
     setup_note_get_mock(&server, "timeline-test", &content_2).await;
 
     let get_result = reg
-        .execute_mcp("page.get", Some(json!({"slug": "timeline-test"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.get",
+            Some(
+                json!({"slug": "timeline-test"})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("get should succeed");
 
@@ -791,7 +841,7 @@ async fn test_frontmatter_merge() {
         "title": "Original Title",
         "page_type": "Concept",
         "tags": ["rust", "test"],
-        
+
         "sources": ["https://example.com"],
         "visibility": "shared"
     });
@@ -810,7 +860,9 @@ async fn test_frontmatter_merge() {
         .and(path("/api/note"))
         .and(query_param("vault", "test-vault"))
         .and(query_param("path", "merge-test.md"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(fns_string_response(&content_original)))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(fns_string_response(&content_original)),
+        )
         .up_to_n_times(1)
         .mount(&server)
         .await;
@@ -833,7 +885,10 @@ async fn test_frontmatter_merge() {
     setup_note_get_mock(&server, "merge-test", &content_merged).await;
 
     let get_result = reg
-        .execute_mcp("page.get", Some(json!({"slug": "merge-test"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "page.get",
+            Some(json!({"slug": "merge-test"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("get should succeed");
 
@@ -886,14 +941,20 @@ async fn test_maintain_lint_clean() {
     .expect("put should succeed");
 
     let result = reg
-        .execute_mcp("maintain", Some(json!({"scope": "lint"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "maintain",
+            Some(json!({"scope": "lint"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("maintain should succeed");
 
     assert_eq!(result["scope"], "lint");
     assert_eq!(result["issues_count"], 0);
     let issues = result["issues"].as_array().unwrap();
-    assert!(issues.is_empty(), "valid pages should produce no lint issues");
+    assert!(
+        issues.is_empty(),
+        "valid pages should produce no lint issues"
+    );
 }
 
 #[tokio::test]
@@ -912,7 +973,10 @@ async fn test_maintain_backlinks_clean() {
     .expect("put page-b should succeed");
 
     let result = reg
-        .execute_mcp("maintain", Some(json!({"scope": "backlinks"}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "maintain",
+            Some(json!({"scope": "backlinks"}).as_object().cloned().unwrap()),
+        )
         .await
         .expect("maintain should succeed");
 
@@ -935,7 +999,7 @@ async fn test_search_cjk() {
             "title": "中文测试页面",
             "page_type": "Concept",
             "tags": ["test"],
-            
+
             "sources": [],
             "visibility": "shared"
         }), "timeline": {"content": "Created"}}).as_object().cloned().unwrap()))
@@ -943,7 +1007,15 @@ async fn test_search_cjk() {
     .expect("put should succeed");
 
     let result = reg
-        .execute_mcp("search", Some(json!({"query": "中文搜索", "limit": 10}).as_object().cloned().unwrap()))
+        .execute_mcp(
+            "search",
+            Some(
+                json!({"query": "中文搜索", "limit": 10})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
+        )
         .await
         .expect("search should succeed");
 
@@ -975,13 +1047,19 @@ async fn test_sync_normalizes_slugs() {
     assert_eq!(result["errors"].as_array().unwrap().len(), 0);
 
     let page1 = index.get_page("wiki/test-page").await.unwrap();
-    assert!(page1.is_some(), "slug should be normalized to wiki/test-page");
+    assert!(
+        page1.is_some(),
+        "slug should be normalized to wiki/test-page"
+    );
 
     let page1_md = index.get_page("wiki/test-page.md").await.unwrap();
     assert!(page1_md.is_none(), "slug should not have .md suffix");
 
     let page2 = index.get_page("folder/nested").await.unwrap();
-    assert!(page2.is_some(), "slug should be normalized to folder/nested");
+    assert!(
+        page2.is_some(),
+        "slug should be normalized to folder/nested"
+    );
 
     let page2_md = index.get_page("folder/nested.md").await.unwrap();
     assert!(page2_md.is_none(), "slug should not have .md suffix");

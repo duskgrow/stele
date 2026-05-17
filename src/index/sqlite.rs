@@ -534,20 +534,22 @@ mod tests {
         assert_eq!(slug_names, vec!["hello", "no-suffix", "world"]);
 
         // Verify link slugs are stripped
-        let links: Vec<(String, String)> = sqlx::query_as("SELECT source_slug, target_slug FROM links")
-            .fetch_all(&engine.pool)
-            .await
-            .unwrap();
+        let links: Vec<(String, String)> =
+            sqlx::query_as("SELECT source_slug, target_slug FROM links")
+                .fetch_all(&engine.pool)
+                .await
+                .unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].0, "hello");
         assert_eq!(links[0].1, "world");
 
         // Verify FTS still works after rebuild
-        let fts_results: Vec<(String,)> = sqlx::query_as("SELECT slug FROM pages_fts WHERE pages_fts MATCH ?1")
-            .bind("Hello")
-            .fetch_all(&engine.pool)
-            .await
-            .unwrap();
+        let fts_results: Vec<(String,)> =
+            sqlx::query_as("SELECT slug FROM pages_fts WHERE pages_fts MATCH ?1")
+                .bind("Hello")
+                .fetch_all(&engine.pool)
+                .await
+                .unwrap();
         let fts_slugs: Vec<String> = fts_results.into_iter().map(|r| r.0).collect();
         assert!(fts_slugs.contains(&"hello".to_string()));
     }
@@ -609,10 +611,11 @@ mod tests {
         assert_eq!(slugs_before, slugs_after);
 
         // Verify links are still correct
-        let links: Vec<(String, String)> = sqlx::query_as("SELECT source_slug, target_slug FROM links")
-            .fetch_all(&engine.pool)
-            .await
-            .unwrap();
+        let links: Vec<(String, String)> =
+            sqlx::query_as("SELECT source_slug, target_slug FROM links")
+                .fetch_all(&engine.pool)
+                .await
+                .unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].0, "test");
         assert_eq!(links[0].1, "test");
@@ -678,15 +681,21 @@ mod tests {
 
         engine.update_links("page-a", &links).await.unwrap();
 
-        let outgoing = graph::get_outlinks(engine.pool(), "page-a", None).await.unwrap();
+        let outgoing = graph::get_outlinks(engine.pool(), "page-a", None)
+            .await
+            .unwrap();
         assert_eq!(outgoing.len(), 2);
 
-        let backlinks_b = graph::get_backlinks(engine.pool(), "page-b", None).await.unwrap();
+        let backlinks_b = graph::get_backlinks(engine.pool(), "page-b", None)
+            .await
+            .unwrap();
         assert_eq!(backlinks_b.len(), 1);
         assert_eq!(backlinks_b[0].source_slug, "page-a");
         assert_eq!(backlinks_b[0].link_type, LinkType::Plain);
 
-        let backlinks_c = graph::get_backlinks(engine.pool(), "page-c", None).await.unwrap();
+        let backlinks_c = graph::get_backlinks(engine.pool(), "page-c", None)
+            .await
+            .unwrap();
         assert_eq!(backlinks_c.len(), 1);
         assert_eq!(
             backlinks_c[0].link_type,
