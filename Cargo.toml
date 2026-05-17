@@ -1,6 +1,6 @@
 [package]
 name = "stele"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.85"
 
@@ -28,7 +28,7 @@ async-trait = "0.1"
 dashmap = "6"
 tokio-stream = "0.1"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
-rmcp = { version = "1.6", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.7", features = ["server", "transport-io", "transport-streamable-http-server"] }
 inventory = "0.3"
 
 [profile.release]
