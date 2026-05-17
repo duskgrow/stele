@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use crate::ops::handler::{OpHandler, OpExec, OperationContext};
 use crate::types::TimelineAppendInput;
+use crate::types::page::PageType;
 
 /// Handler struct registered with inventory.
 pub struct PagePutHandler;
@@ -19,14 +20,11 @@ fn validate_page_type(frontmatter: &Option<Value>) -> Result<(), anyhow::Error> 
     if let Some(Value::Object(map)) = frontmatter {
         if let Some(page_type_val) = map.get("page_type") {
             if let Some(page_type_str) = page_type_val.as_str() {
-                let valid = matches!(
-                    page_type_str,
-                    "Entity" | "Concept" | "Source" | "Query" | "Synthesis" | "Comparison"
-                );
-                if !valid {
+                if !PageType::NAMES.contains(&page_type_str) {
                     return Err(anyhow::anyhow!(
-                        "invalid page_type: '{}'. Valid types: Entity, Concept, Source, Query, Synthesis, Comparison",
-                        page_type_str
+                        "invalid page_type: '{}'. Valid types: {}",
+                        page_type_str,
+                        PageType::NAMES.join(", ")
                     ));
                 }
             }
@@ -72,7 +70,7 @@ impl OpHandler for PagePutHandler {
                     "description": "Frontmatter fields to merge (required 'title' for new pages)",
                     "properties": {
                         "title": { "type": "string" },
-                        "page_type": { "type": "string", "enum": ["Entity", "Concept", "Source", "Query", "Synthesis", "Comparison"] },
+                        "page_type": { "type": "string", "enum": PageType::NAMES },
                         "tags": { "type": "array", "items": { "type": "string" } },
                         "sources": { "type": "array", "items": { "type": "string" } },
                         "date": { "type": "string" },
@@ -305,8 +303,8 @@ mod tests {
 
     #[test]
     fn test_validate_page_type_all_valid_types() {
-        let valid_types = ["Entity", "Concept", "Source", "Query", "Synthesis", "Comparison"];
-        for pt in valid_types {
+        let valid_types = PageType::NAMES;
+        for &pt in valid_types {
             let fm = Some(json!({"page_type": pt}));
             assert!(
                 validate_page_type(&fm).is_ok(),
@@ -323,7 +321,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid page_type: 'InvalidType'"), "expected invalid page_type error, got: {err}");
-        assert!(err.contains("Valid types: Entity, Concept, Source, Query, Synthesis, Comparison"), "expected valid types list, got: {err}");
+        assert!(err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))), "expected valid types list, got: {err}");
     }
 
     #[test]
@@ -361,7 +359,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid page_type: 'InvalidType'"), "expected invalid page_type error, got: {err}");
-        assert!(err.contains("Valid types: Entity, Concept, Source, Query, Synthesis, Comparison"), "expected valid types list, got: {err}");
+        assert!(err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))), "expected valid types list, got: {err}");
     }
 
     #[tokio::test]
