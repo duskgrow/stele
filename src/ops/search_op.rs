@@ -32,6 +32,13 @@ impl OpExec for SearchOp {
     }
 }
 
+fn normalize_optional_arg(value: Option<&str>) -> Option<String> {
+    value
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 impl OpHandler for SearchHandler {
     fn name(&self) -> &'static str {
         "search"
@@ -64,18 +71,8 @@ impl OpHandler for SearchHandler {
             .ok_or_else(|| anyhow::anyhow!("missing required field: query"))?
             .to_string();
         let limit = args.get("limit").and_then(|v| v.as_i64());
-        let type_filter = args
-            .get("type_filter")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        let sort = args
-            .get("sort")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        let type_filter = normalize_optional_arg(args.get("type_filter").and_then(|v| v.as_str()));
+        let sort = normalize_optional_arg(args.get("sort").and_then(|v| v.as_str()));
         Ok(Box::new(SearchOp {
             query,
             limit,
@@ -110,8 +107,9 @@ impl OpHandler for SearchHandler {
             .ok_or_else(|| anyhow::anyhow!("missing required argument: query"))?
             .clone();
         let limit = matches.get_one::<i64>("limit").copied();
-        let type_filter = matches.get_one::<String>("type_filter").cloned();
-        let sort = matches.get_one::<String>("sort").cloned();
+        let type_filter =
+            normalize_optional_arg(matches.get_one::<String>("type_filter").map(String::as_str));
+        let sort = normalize_optional_arg(matches.get_one::<String>("sort").map(String::as_str));
         Ok(Box::new(SearchOp {
             query,
             limit,
@@ -348,6 +346,50 @@ mod tests {
             .expect("should be SearchOp");
         assert_eq!(op.query, "rust");
         assert_eq!(op.sort, Some("title".to_string()));
+    }
+
+    #[test]
+    fn test_search_from_cli_empty_type_filter() {
+        let handler = SearchHandler;
+        let cmd = handler.cli_command();
+        let matches = cmd
+            .try_get_matches_from(["search", "rust", "--type-filter", ""])
+            .unwrap();
+
+        let exec = handler
+            .from_cli_matches(&matches)
+            .expect("from_cli_matches should succeed");
+        let op = exec
+            .as_any()
+            .downcast_ref::<SearchOp>()
+            .expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert!(
+            op.type_filter.is_none(),
+            "empty CLI type_filter should normalize to None"
+        );
+    }
+
+    #[test]
+    fn test_search_from_cli_whitespace_type_filter() {
+        let handler = SearchHandler;
+        let cmd = handler.cli_command();
+        let matches = cmd
+            .try_get_matches_from(["search", "rust", "--type-filter", "   "])
+            .unwrap();
+
+        let exec = handler
+            .from_cli_matches(&matches)
+            .expect("from_cli_matches should succeed");
+        let op = exec
+            .as_any()
+            .downcast_ref::<SearchOp>()
+            .expect("should be SearchOp");
+        assert_eq!(op.query, "rust");
+        assert!(
+            op.type_filter.is_none(),
+            "whitespace CLI type_filter should normalize to None"
+        );
     }
 
     #[tokio::test]
