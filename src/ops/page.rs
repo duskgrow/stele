@@ -65,6 +65,26 @@ pub async fn handle_page_put(
     let slug = page_parser::normalize_slug(slug)?;
     let fns_path = page_parser::to_fns_path(&slug);
 
+    if crate::ops::is_raw_path(&slug) {
+        fns.put_note(&fns_path, body)
+            .await
+            .map_err(|e| Error::Fns(format!("failed to save page '{slug}': {e}")))?;
+        let content_hash = crate::parser::page::compute_hash(body);
+        return Ok(json!({
+            "slug": slug,
+            "content_hash": content_hash,
+            "indexed": false,
+            "links_count": 0,
+            "timeline_count": 0,
+        }));
+    }
+
+    if timeline_append.content.is_empty() {
+        return Err(Error::Parse(
+            "timeline.content is required for wiki pages".to_string(),
+        ));
+    }
+
     if let Some(expected_etag) = etag {
         if let Some(existing) = index.get_page(&slug).await? {
             if existing.content_hash != expected_etag {
@@ -1163,5 +1183,77 @@ mod tests {
             }
             other => panic!("expected NotFound error, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_page_put_raw() {
+        let (fns, index, server) = setup_test_fns_and_index().await;
+        let slug = "raw/my-note";
+        let body = "hello world";
+
+        Mock::given(method("POST"))
+            .and(path("/api/note"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": null
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_put(
+            &fns,
+            &index,
+            slug,
+            body,
+            None,
+            TimelineAppendInput {
+                content: String::new(),
+                agent: None,
+            },
+            None,
+        )
+        .await
+        .expect("put should succeed");
+
+        assert_eq!(result["slug"].as_str().unwrap(), slug);
+        assert_eq!(result["indexed"].as_bool().unwrap(), false);
+        assert_eq!(result["links_count"].as_u64().unwrap(), 0);
+        assert_eq!(result["timeline_count"].as_u64().unwrap(), 0);
+        assert!(result["content_hash"].is_string());
+
+        let page = index.get_page(slug).await.expect("get_page should succeed");
+        assert!(page.is_none(), "raw pages should not be indexed");
+    }
+
+    #[tokio::test]
+    async fn test_page_put_wiki_requires_timeline() {
+        let (fns, index, _server) = setup_test_fns_and_index().await;
+        let slug = "wiki/normal";
+        let body = "Some content.\n";
+        let fm_json = sample_frontmatter_json(slug);
+
+        let result = handle_page_put(
+            &fns,
+            &index,
+            slug,
+            body,
+            Some(&fm_json),
+            TimelineAppendInput {
+                content: String::new(),
+                agent: None,
+            },
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("timeline.content is required"),
+            "expected timeline content error, got: {err}"
+        );
     }
 }

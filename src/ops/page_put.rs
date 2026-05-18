@@ -39,7 +39,9 @@ impl OpExec for PagePutOp {
         self
     }
     async fn execute(&self, ctx: &OperationContext) -> Result<Value, anyhow::Error> {
-        validate_page_type(&self.frontmatter_updates)?;
+        if !crate::ops::is_raw_path(&self.slug) {
+            validate_page_type(&self.frontmatter_updates)?;
+        }
 
         crate::ops::page::handle_page_put(
             &ctx.fns,
