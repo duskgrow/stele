@@ -1362,7 +1362,7 @@ mod tests {
         .expect("put should succeed");
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
-        assert_eq!(result["indexed"].as_bool().unwrap(), false);
+        assert!(!result["indexed"].as_bool().unwrap());
         assert_eq!(result["links_count"].as_u64().unwrap(), 0);
         assert_eq!(result["timeline_count"].as_u64().unwrap(), 0);
         assert!(result["content_hash"].is_string());
