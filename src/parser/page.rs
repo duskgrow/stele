@@ -255,7 +255,7 @@ fn format_timeline_entry(entry: &TimelineEntry) -> String {
     }
 }
 
-fn compute_hash(content: &str) -> String {
+pub(crate) fn compute_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     let result = hasher.finalize();

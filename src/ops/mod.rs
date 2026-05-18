@@ -23,3 +23,22 @@ pub use registry::{OperationMeta, OperationRegistry};
 pub(crate) fn is_hidden_path(path: &str) -> bool {
     path.rsplit('/').next().unwrap_or(path).starts_with('.')
 }
+
+/// Returns true if the path starts with the raw prefix "raw/".
+pub(crate) fn is_raw_path(path: &str) -> bool {
+    path.starts_with("raw/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_raw_path() {
+        assert!(is_raw_path("raw/foo"));
+        assert!(is_raw_path("raw/sub/deep"));
+        assert!(!is_raw_path("wiki/foo"));
+        assert!(!is_raw_path("raw"));
+        assert!(!is_raw_path("rawfoo"));
+    }
+}

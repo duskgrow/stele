@@ -93,7 +93,7 @@ impl OpHandler for PagePutHandler {
                 },
                 "etag": { "type": "string" }
             },
-            "required": ["slug", "body", "timeline"]
+            "required": ["slug", "body"]
         })
     }
 
@@ -117,20 +117,21 @@ impl OpHandler for PagePutHandler {
 
         let frontmatter_updates = args.get("frontmatter").cloned();
 
-        let timeline_obj = args
-            .get("timeline")
-            .ok_or_else(|| anyhow::anyhow!("missing required field: timeline"))?;
-
-        let timeline_content = timeline_obj
-            .get("content")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("missing required field: timeline.content"))?;
-
-        let timeline_agent = timeline_obj
-            .get("agent")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let (timeline_content, timeline_agent) = match args.get("timeline") {
+            Some(timeline_obj) => {
+                let content = timeline_obj
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow::anyhow!("missing required field: timeline.content"))?;
+                let agent = timeline_obj
+                    .get("agent")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (content, agent)
+            }
+            None => (String::new(), None),
+        };
 
         let etag = args
             .get("etag")
@@ -175,8 +176,8 @@ impl OpHandler for PagePutHandler {
                 clap::Arg::new("timeline-content")
                     .long("timeline-content")
                     .value_name("TEXT")
-                    .required(true)
-                    .help("Timeline entry content (required)"),
+                    .required(false)
+                    .help("Timeline entry content"),
             )
             .arg(
                 clap::Arg::new("timeline-agent")
@@ -225,8 +226,8 @@ impl OpHandler for PagePutHandler {
 
         let timeline_content = matches
             .get_one::<String>("timeline-content")
-            .ok_or_else(|| anyhow::anyhow!("missing required argument: timeline-content"))?
-            .clone();
+            .cloned()
+            .unwrap_or_default();
 
         let timeline_agent = matches.get_one::<String>("timeline-agent").cloned();
 
@@ -273,7 +274,7 @@ mod tests {
         let required_fields: Vec<&str> = required.iter().map(|v| v.as_str().unwrap()).collect();
         assert!(required_fields.contains(&"slug"));
         assert!(required_fields.contains(&"body"));
-        assert!(required_fields.contains(&"timeline"));
+        assert!(!required_fields.contains(&"timeline"));
     }
 
     #[test]
@@ -307,12 +308,6 @@ mod tests {
         let mut args = serde_json::Map::new();
         args.insert("slug".to_string(), Value::String("test-page".to_string()));
         args.insert("body".to_string(), Value::String("# Hello".to_string()));
-        let mut timeline = serde_json::Map::new();
-        timeline.insert(
-            "content".to_string(),
-            Value::String("Created page".to_string()),
-        );
-        args.insert("timeline".to_string(), Value::Object(timeline));
 
         let exec = handler
             .from_mcp_args(Some(args))
@@ -321,22 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn test_page_put_missing_timeline() {
+    fn test_page_put_missing_timeline_defaults_empty() {
         let handler = PagePutHandler;
         let mut args = serde_json::Map::new();
         args.insert("slug".to_string(), Value::String("test-page".to_string()));
         args.insert("body".to_string(), Value::String("# Hello".to_string()));
 
         let result = handler.from_mcp_args(Some(args));
-        assert!(result.is_err());
-        let err = match result {
-            Err(e) => e.to_string(),
-            Ok(_) => panic!("expected error"),
-        };
-        assert!(
-            err.contains("missing required field: timeline"),
-            "expected timeline error, got: {err}"
-        );
+        assert!(result.is_ok(), "expected success when timeline is omitted");
     }
 
     #[test]

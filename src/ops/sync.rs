@@ -170,7 +170,7 @@ pub async fn handle_sync(
     index: &IndexEngine,
     dir: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let sync_dir = dir.unwrap_or(".");
+    let sync_dir = dir.unwrap_or("wiki");
     info!("starting sync for directory: {}", sync_dir);
 
     let mut fns_slugs = HashSet::new();
@@ -342,7 +342,8 @@ sources: []
         let server = MockServer::start().await;
         let index = IndexEngine::new(":memory:").await.unwrap();
 
-        setup_list_mock(&server, &["a.md", "b.md", "c.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["a.md", "b.md", "c.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         for name in &["a", "b", "c"] {
             let content =
@@ -377,7 +378,8 @@ sources: []
         let old_page = page_parser::parse_page(&old_content, "changed").unwrap();
         index.index_page(&old_page).await.unwrap();
 
-        setup_list_mock(&server, &["changed.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["changed.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         let new_content = sample_markdown("New Title", "New content");
         setup_note_mock(&server, "changed.md", &new_content).await;
@@ -409,7 +411,8 @@ sources: []
         assert!(index.get_page("to-delete").await.unwrap().is_some());
 
         // FNS returns empty list
-        setup_list_mock(&server, &[]).await;
+        setup_list_mock_for_dir(&server, "wiki", &[]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         let fns = FnsClient::new(
             server.uri(),
@@ -430,7 +433,8 @@ sources: []
         let server = MockServer::start().await;
         let index = IndexEngine::new(":memory:").await.unwrap();
 
-        setup_list_mock(&server, &["good1.md", "bad.md", "good2.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["good1.md", "bad.md", "good2.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         // good1 succeeds
         let content1 = sample_markdown("Good 1", "Content 1");
@@ -469,7 +473,8 @@ sources: []
         let server = MockServer::start().await;
         let index = IndexEngine::new(":memory:").await.unwrap();
 
-        setup_list_mock(&server, &["source.md", "target.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["source.md", "target.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         let source_content = sample_markdown_with_links("Source", &["target.md"]);
         setup_note_mock(&server, "source.md", &source_content).await;
@@ -501,7 +506,8 @@ sources: []
         let page = page_parser::parse_page(&content, "existing").unwrap();
         index.index_page(&page).await.unwrap();
 
-        setup_list_mock(&server, &["existing.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["existing.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
         setup_note_mock(&server, "existing.md", &content).await;
 
         let fns = FnsClient::new(
@@ -538,7 +544,8 @@ sources: []
         index.index_page(&del_page).await.unwrap();
 
         // FNS has: unchanged (same), will-change (different), new-page (new)
-        setup_list_mock(&server, &["unchanged.md", "will-change.md", "new-page.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["unchanged.md", "will-change.md", "new-page.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
         setup_note_mock(&server, "unchanged.md", &unchanged_content).await;
 
         let new_change_content = sample_markdown("Changed", "New content");
@@ -570,7 +577,8 @@ sources: []
         let server = MockServer::start().await;
         let index = IndexEngine::new(":memory:").await.unwrap();
 
-        setup_list_mock(&server, &["hub.md", "a.md", "b.md", "c.md"]).await;
+        setup_list_mock_for_dir(&server, "wiki", &["hub.md", "a.md", "b.md", "c.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         let hub_content = sample_markdown_with_links("Hub", &["a.md", "b.md", "c.md"]);
         setup_note_mock(&server, "hub.md", &hub_content).await;
@@ -618,7 +626,7 @@ sources: []
             "test-token".to_string(),
             "test-vault".to_string(),
         );
-        let result = handle_sync(&fns, &index, None).await.unwrap();
+        let result = handle_sync(&fns, &index, Some(".")).await.unwrap();
 
         assert_eq!(result["pages_indexed"], 2);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
@@ -649,7 +657,7 @@ sources: []
             "test-token".to_string(),
             "test-vault".to_string(),
         );
-        let result = handle_sync(&fns, &index, None).await.unwrap();
+        let result = handle_sync(&fns, &index, Some(".")).await.unwrap();
 
         assert_eq!(result["pages_indexed"], 2);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
@@ -663,8 +671,8 @@ sources: []
         let server = MockServer::start().await;
         let index = IndexEngine::new(":memory:").await.unwrap();
 
-        setup_list_mock_for_dir(&server, ".", &[".secret.md", "readme.md"]).await;
-        setup_folders_mock(&server, ".").await;
+        setup_list_mock_for_dir(&server, "wiki", &[".secret.md", "readme.md"]).await;
+        setup_folders_mock(&server, "wiki").await;
 
         let readme_content = sample_markdown("Readme", "Readme page");
         setup_note_mock(&server, "readme.md", &readme_content).await;
@@ -707,7 +715,7 @@ sources: []
             "test-token".to_string(),
             "test-vault".to_string(),
         );
-        let result = handle_sync(&fns, &index, None).await.unwrap();
+        let result = handle_sync(&fns, &index, Some(".")).await.unwrap();
 
         assert_eq!(result["pages_indexed"], 0);
         assert_eq!(result["errors"].as_array().unwrap().len(), 0);
@@ -741,7 +749,7 @@ sources: []
             "test-token".to_string(),
             "test-vault".to_string(),
         );
-        let result = handle_sync(&fns, &index, None).await.unwrap();
+        let result = handle_sync(&fns, &index, Some(".")).await.unwrap();
 
         assert_eq!(result["pages_indexed"], 1);
         assert_eq!(result["pages_removed"], 2);
