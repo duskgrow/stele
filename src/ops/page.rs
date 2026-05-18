@@ -16,6 +16,24 @@ pub async fn handle_page_get(
     slug: &str,
 ) -> Result<serde_json::Value> {
     let slug = page_parser::normalize_slug(slug)?;
+
+    if crate::ops::is_raw_path(&slug) {
+        let fns_path = page_parser::to_fns_path(&slug);
+        let content = match fns.get_note(&fns_path).await {
+            Ok(content) => content,
+            Err(Error::NotFound(msg)) => return Err(Error::NotFound(msg)),
+            Err(e) => return Err(Error::Fns(format!("failed to fetch page '{slug}': {e}"))),
+        };
+        let content_hash = crate::parser::page::compute_hash(&content);
+        return Ok(json!({
+            "slug": slug,
+            "body": content,
+            "content_hash": content_hash,
+            "frontmatter": null,
+            "timeline": [],
+        }));
+    }
+
     let fns_path = page_parser::to_fns_path(&slug);
 
     let content = match fns.get_note(&fns_path).await {
@@ -1085,5 +1103,65 @@ mod tests {
 
         assert_eq!(result["slug"].as_str().unwrap(), slug);
         assert_eq!(result["timeline_count"].as_u64().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_page_get_raw() {
+        let (fns, index, server) = setup_test_fns_and_index().await;
+        let slug = "raw/my-note";
+        let raw_content = "# Raw Note\n\nThis is raw content without frontmatter.\n";
+
+        Mock::given(method("GET"))
+            .and(path("/api/note"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "raw/my-note.md"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": { "content": raw_content, "path": "raw/my-note.md", "fileLinks": {}, "version": 1 }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_get(&fns, &index, slug)
+            .await
+            .expect("get should succeed");
+
+        assert_eq!(result["slug"].as_str().unwrap(), slug);
+        assert_eq!(result["body"].as_str().unwrap(), raw_content);
+        assert!(result["content_hash"].is_string());
+        assert!(result["frontmatter"].is_null());
+        assert!(result["timeline"].is_array());
+        assert!(result["timeline"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_page_get_raw_not_found() {
+        let (fns, index, server) = setup_test_fns_and_index().await;
+        let slug = "raw/missing";
+
+        Mock::given(method("GET"))
+            .and(path("/api/note"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "raw/missing.md"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_get(&fns, &index, slug).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::NotFound(msg) => {
+                assert!(
+                    msg.contains("not found") || msg.contains("Note does not exist"),
+                    "expected not found message, got: {msg}"
+                );
+            }
+            other => panic!("expected NotFound error, got {:?}", other),
+        }
     }
 }
