@@ -179,6 +179,16 @@ pub async fn handle_page_delete(
     let slug = page_parser::normalize_slug(slug)?;
     let fns_path = page_parser::to_fns_path(&slug);
 
+    if crate::ops::is_raw_path(&slug) {
+        fns.delete_note(&fns_path)
+            .await
+            .map_err(|e| Error::Fns(format!("failed to delete page '{slug}': {e}")))?;
+        return Ok(json!({
+            "slug": slug,
+            "deleted": true,
+        }));
+    }
+
     fns.delete_note(&fns_path)
         .await
         .map_err(|e| Error::Fns(format!("failed to delete page '{slug}': {e}")))?;
@@ -595,6 +605,32 @@ mod tests {
         .expect("put should succeed");
 
         assert!(index.get_page(slug).await.unwrap().is_some());
+
+        let result = handle_page_delete(&fns, &index, slug)
+            .await
+            .expect("delete should succeed");
+
+        assert_eq!(result["slug"].as_str().unwrap(), slug);
+        assert!(result["deleted"].as_bool().unwrap());
+        assert!(index.get_page(slug).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_page_delete_raw() {
+        let (fns, index, server) = setup_test_fns_and_index().await;
+        let slug = "raw/my-note";
+
+        Mock::given(method("DELETE"))
+            .and(path("/api/note"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": null
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
 
         let result = handle_page_delete(&fns, &index, slug)
             .await
