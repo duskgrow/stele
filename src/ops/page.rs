@@ -842,6 +842,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_page_list_raw_dir() {
+        let (fns, _index, server) = setup_test_fns_and_index().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folder/notes"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "raw"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": {
+                    "list": [
+                        {"path": "raw/note1.md"},
+                        {"path": "raw/note2.md"}
+                    ],
+                    "pager": { "totalRows": 2 }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folders"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "raw"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_list(&fns, Some("raw"))
+            .await
+            .expect("list should succeed");
+
+        let files = result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].as_str().unwrap(), "raw/note1.md");
+        assert_eq!(files[1].as_str().unwrap(), "raw/note2.md");
+
+        let folders = result["folders"].as_array().unwrap();
+        assert!(folders.is_empty());
+
+        assert_eq!(result["count"].as_u64().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_page_list_wiki_dir() {
+        let (fns, _index, server) = setup_test_fns_and_index().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folder/notes"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "wiki"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": {
+                    "list": [
+                        {"path": "wiki/home.md"}
+                    ],
+                    "pager": { "totalRows": 1 }
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/folders"))
+            .and(query_param("vault", "test-vault"))
+            .and(query_param("path", "wiki"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 1,
+                "status": true,
+                "message": "Success",
+                "data": [
+                    {"path": "wiki/sub", "pathHash": "abc"}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = handle_page_list(&fns, Some("wiki"))
+            .await
+            .expect("list should succeed");
+
+        let files = result["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].as_str().unwrap(), "wiki/home.md");
+
+        let folders = result["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].as_str().unwrap(), "wiki/sub");
+
+        assert_eq!(result["count"].as_u64().unwrap(), 2);
+    }
+
+    #[tokio::test]
     async fn test_page_list_leaf() {
         let (fns, _index, server) = setup_test_fns_and_index().await;
 
