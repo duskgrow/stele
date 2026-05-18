@@ -269,22 +269,6 @@ sources: []
         sample_markdown(title, &link_text)
     }
 
-    async fn setup_list_mock(server: &MockServer, files: &[&str]) {
-        let list_items: Vec<serde_json::Value> = files.iter().map(|f| json!({"path": f})).collect();
-        let total = files.len();
-        let response_data = json!({
-            "list": list_items,
-            "pager": { "totalRows": total }
-        });
-        Mock::given(method("GET"))
-            .and(path("/api/folder/notes"))
-            .and(query_param("vault", "test-vault"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(fns_response(response_data)))
-            .mount(server)
-            .await;
-        setup_folders_mock(server, ".").await;
-    }
-
     async fn setup_list_mock_for_dir(server: &MockServer, dir: &str, files: &[&str]) {
         let list_items: Vec<serde_json::Value> = files.iter().map(|f| json!({"path": f})).collect();
         let total = files.len();
