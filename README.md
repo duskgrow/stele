@@ -1,6 +1,6 @@
 # stele
 
-Stele is a personal knowledge management tool that indexes markdown pages from an FNS (vault) server, stores them in a local SQLite database with full-text search, and exposes operations through both a CLI and an MCP (Model Context Protocol) server.
+Stele is a personal knowledge management tool that indexes Markdown wiki pages from the `wiki/` directory of an FNS (vault) server, stores them in a local SQLite database with full-text search, and exposes operations through both a CLI and an MCP (Model Context Protocol) server. The `raw/` directory is a temporary, unindexed pool for original undigested source content.
 
 ## Quick Start
 
@@ -53,13 +53,20 @@ stele serve --transport http --port 3000
 
 ## Usage
 
+### Content Layout
+
+Stele treats the FNS vault as two separate spaces:
+
+- `wiki/`: durable knowledge pages. These are indexed by default. Only `.md` files are indexed, hidden paths are skipped, and pages must use YAML frontmatter plus timeline entries.
+- `raw/`: temporary source material. These files keep the original undigested content exactly as received, have no frontmatter or timeline, are not indexed by `sync`, and are deleted after agents digest them into `wiki/` pages.
+
 ### CLI Commands
 
 ```bash
 # Page operations
 stele page get <slug>
-stele page put <slug> --content "# Hello\n\nWorld"
-stele page put <slug> --file ./page.md
+stele page put wiki/<slug> --content "# Hello\n\nWorld" --frontmatter '{"title":"Hello"}' --timeline-content "Create wiki page"
+stele page put raw/<slug> --file ./source.txt
 stele page delete <slug>
 stele page list [dir]
 
@@ -71,8 +78,8 @@ stele graph query <slug> [--depth N] [--direction in|out|both]
 
 > **Note**: `graph.backlinks` has been removed. Use `stele graph query <slug> --direction in` instead.
 
-# Sync from FNS vault
-stele sync [--dir /notes]
+# Sync wiki Markdown pages from FNS vault (default: wiki/)
+stele sync [--dir wiki]
 
 # Maintenance
 stele maintain [--scope lint|orphans|backlinks|full]
@@ -80,7 +87,7 @@ stele maintain [--scope lint|orphans|backlinks|full]
 # Index stats
 stele stats
 
-# Rebuild search index
+# Rebuild wiki search index
 stele reindex
 ```
 
@@ -126,7 +133,7 @@ Config file resolution order:
 
 ## Architecture
 
-Stele reads markdown files from an FNS vault via HTTP, parses YAML frontmatter and wikilink syntax (`[[target]]`, `[[type::target]]`), and stores pages in SQLite with an FTS5 full-text search index. The link graph is tracked in a separate `links` table, enabling graph queries like backlinks, BFS neighborhood traversal, and orphan detection. Operations are exposed through a unified `OperationRegistry` that dispatches to both the CLI and MCP server handlers.
+Stele reads Markdown files from `wiki/` in an FNS vault via HTTP, parses YAML frontmatter, timeline entries, and wikilink syntax (`[[target]]`, `[[type::target]]`), and stores pages in SQLite with an FTS5 full-text search index. `sync` indexes only `.md` files, skips hidden paths, and leaves `raw/` content unindexed because raw files are temporary original source material with no frontmatter or timeline. The link graph is tracked in a separate `links` table, enabling graph queries like backlinks, BFS neighborhood traversal, and orphan detection. Operations are exposed through a unified `OperationRegistry` that dispatches to both the CLI and MCP server handlers.
 
 ## Development
 

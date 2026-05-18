@@ -27,14 +27,14 @@ impl OpHandler for SyncHandler {
         "sync"
     }
     fn description(&self) -> &'static str {
-        "Sync pages from FNS vault"
+        "Sync wiki Markdown pages from FNS vault"
     }
 
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "dir": { "type": "string", "description": "Directory to sync (default: root)" }
+                "dir": { "type": "string", "description": "Directory to sync (default: wiki/). Only Markdown files are indexed; hidden paths are skipped. raw/ is unindexed source material." }
             }
         })
     }
@@ -53,8 +53,12 @@ impl OpHandler for SyncHandler {
 
     fn cli_command(&self) -> clap::Command {
         clap::Command::new("sync")
-            .about("Sync from FNS vault")
-            .arg(clap::Arg::new("dir").long("dir"))
+            .about("Sync wiki Markdown pages from FNS vault")
+            .arg(
+                clap::Arg::new("dir")
+                    .long("dir")
+                    .help("Directory to sync (default: wiki/; only Markdown files are indexed; hidden paths are skipped)"),
+            )
     }
 
     fn from_cli_matches(

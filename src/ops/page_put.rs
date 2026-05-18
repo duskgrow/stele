@@ -39,7 +39,18 @@ impl OpExec for PagePutOp {
         self
     }
     async fn execute(&self, ctx: &OperationContext) -> Result<Value, anyhow::Error> {
-        if !crate::ops::is_raw_path(&self.slug) {
+        if crate::ops::is_raw_path(&self.slug) {
+            if self.frontmatter_updates.is_some() {
+                return Err(anyhow::anyhow!(
+                    "frontmatter must not be provided for raw pages"
+                ));
+            }
+            if !self.timeline_append.content.is_empty() || self.timeline_append.agent.is_some() {
+                return Err(anyhow::anyhow!(
+                    "timeline must not be provided for raw pages"
+                ));
+            }
+        } else {
             validate_page_type(&self.frontmatter_updates)?;
         }
 
@@ -62,7 +73,7 @@ impl OpHandler for PagePutHandler {
         "page.put"
     }
     fn description(&self) -> &'static str {
-        "Create or update a page with structured input"
+        "Create or update wiki pages with frontmatter/timeline, or raw pages as unstructured temporary source content"
     }
 
     fn input_schema(&self) -> Value {
@@ -70,10 +81,10 @@ impl OpHandler for PagePutHandler {
             "type": "object",
             "properties": {
                 "slug": { "type": "string" },
-                "body": { "type": "string", "description": "Markdown body content (without frontmatter)" },
+                "body": { "type": "string", "description": "Page body. For wiki pages this is Markdown without frontmatter; for raw/ pages this is the original unstructured content." },
                 "frontmatter": {
                     "type": "object",
-                    "description": "Frontmatter fields to merge (required 'title' for new pages)",
+                    "description": "Wiki pages only: frontmatter fields to merge (required with title for new wiki pages). Do not provide for raw/ pages.",
                     "properties": {
                         "title": { "type": "string" },
                         "page_type": { "type": "string", "enum": PageType::NAMES },
@@ -86,7 +97,7 @@ impl OpHandler for PagePutHandler {
                 },
                 "timeline": {
                     "type": "object",
-                    "description": "Timeline entry to append (date auto-generated)",
+                    "description": "Wiki pages only: timeline entry to append (date auto-generated; content is required). Do not provide for raw/ pages because raw content is temporary.",
                     "properties": {
                         "content": { "type": "string" },
                         "agent": { "type": "string" }
@@ -154,7 +165,7 @@ impl OpHandler for PagePutHandler {
 
     fn cli_command(&self) -> clap::Command {
         clap::Command::new("put")
-            .about("Create or update a page")
+            .about("Create/update wiki pages, or store raw/ temporary source content")
             .arg(clap::Arg::new("slug").required(true))
             .arg(
                 clap::Arg::new("content")
@@ -172,20 +183,20 @@ impl OpHandler for PagePutHandler {
                 clap::Arg::new("frontmatter")
                     .long("frontmatter")
                     .value_name("JSON")
-                    .help("Frontmatter updates as JSON"),
+                    .help("Wiki pages only: frontmatter updates as JSON; omit for raw/ pages"),
             )
             .arg(
                 clap::Arg::new("timeline-content")
                     .long("timeline-content")
                     .value_name("TEXT")
                     .required(false)
-                    .help("Timeline entry content"),
+                    .help("Wiki pages only: required timeline entry content; omit for raw/ pages"),
             )
             .arg(
                 clap::Arg::new("timeline-agent")
                     .long("timeline-agent")
                     .value_name("AGENT")
-                    .help("Timeline entry agent name"),
+                    .help("Wiki pages only: timeline entry agent name; omit for raw/ pages"),
             )
             .arg(
                 clap::Arg::new("etag")
@@ -411,6 +422,64 @@ mod tests {
         assert!(
             err.contains(&format!("Valid types: {}", PageType::NAMES.join(", "))),
             "expected valid types list, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_page_put_execute_raw_rejects_frontmatter() {
+        use crate::test_utils::*;
+        let server = wiremock::MockServer::start().await;
+        let fns = test_fns(&server.uri()).await;
+        let index = test_index().await;
+        let config = crate::config::Config::default();
+        let ctx = crate::ops::handler::OperationContext { fns, index, config };
+
+        let op = PagePutOp {
+            slug: "raw/source".to_string(),
+            body: "Raw source".to_string(),
+            frontmatter_updates: Some(json!({"title": "Should not exist"})),
+            timeline_append: TimelineAppendInput {
+                content: String::new(),
+                agent: None,
+            },
+            etag: None,
+        };
+
+        let result = op.execute(&ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("frontmatter must not be provided for raw pages"),
+            "expected raw frontmatter rejection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_page_put_execute_raw_rejects_timeline() {
+        use crate::test_utils::*;
+        let server = wiremock::MockServer::start().await;
+        let fns = test_fns(&server.uri()).await;
+        let index = test_index().await;
+        let config = crate::config::Config::default();
+        let ctx = crate::ops::handler::OperationContext { fns, index, config };
+
+        let op = PagePutOp {
+            slug: "raw/source".to_string(),
+            body: "Raw source".to_string(),
+            frontmatter_updates: None,
+            timeline_append: TimelineAppendInput {
+                content: "Should not exist".to_string(),
+                agent: None,
+            },
+            etag: None,
+        };
+
+        let result = op.execute(&ctx).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("timeline must not be provided for raw pages"),
+            "expected raw timeline rejection, got: {err}"
         );
     }
 

@@ -22,7 +22,8 @@ pub struct SyncResult {
 /// Maximum recursion depth for directory traversal.
 const MAX_SYNC_DEPTH: usize = 10;
 
-/// Recursively sync notes in `dir` and all its subdirectories.
+/// Recursively sync Markdown notes in `dir` and all its subdirectories, skipping hidden paths.
+/// By default callers pass `wiki/`; `raw/` is temporary source material and is not indexed by sync.
 async fn sync_directory(
     fns: &FnsClient,
     index: &IndexEngine,
@@ -164,7 +165,8 @@ async fn sync_directory(
     }
 }
 
-/// Synchronize pages from FNS to local index, recursively traversing all directories.
+/// Synchronize wiki Markdown pages from FNS to the local index.
+/// Defaults to `wiki/`, indexes only Markdown files, skips hidden paths, and leaves `raw/` unindexed.
 pub async fn handle_sync(
     fns: &FnsClient,
     index: &IndexEngine,
@@ -528,7 +530,12 @@ sources: []
         index.index_page(&del_page).await.unwrap();
 
         // FNS has: unchanged (same), will-change (different), new-page (new)
-        setup_list_mock_for_dir(&server, "wiki", &["unchanged.md", "will-change.md", "new-page.md"]).await;
+        setup_list_mock_for_dir(
+            &server,
+            "wiki",
+            &["unchanged.md", "will-change.md", "new-page.md"],
+        )
+        .await;
         setup_folders_mock(&server, "wiki").await;
         setup_note_mock(&server, "unchanged.md", &unchanged_content).await;
 
