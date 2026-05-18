@@ -50,7 +50,7 @@ Runs the complete health check including orphan detection and backlink repair.
 
 ### 3. Daily Vault Sync
 
-Syncs the local index with the FNS vault server.
+Syncs the local wiki index with the FNS vault server. By default, `stele sync` scans `wiki/`, indexes only `.md` files, skips hidden paths, and does not index temporary `raw/` source material.
 
 ```cron
 # Daily at 01:00 - sync from FNS vault
@@ -62,7 +62,7 @@ Syncs the local index with the FNS vault server.
 | Schedule | `0 1 * * *` |
 | Command | `stele sync` |
 | Skill | N/A (background sync) |
-| Notes | Only needed if using an FNS vault |
+| Notes | Only needed if using an FNS vault; sync targets `wiki/` by default |
 
 ### 4. Weekly Stats Report
 
@@ -87,7 +87,7 @@ Generates an index statistics report.
 ```cron
 STELE_CONFIG=/home/user/.config/stele/config.toml
 
-# Daily sync at 01:00
+# Daily sync at 01:00 (wiki/ Markdown index)
 0 1 * * * stele sync >> ~/.local/share/stele/logs/sync.log 2>&1
 
 # Daily lite lint at 03:00
@@ -164,14 +164,14 @@ sudoedit /etc/cron.d/stele
 ```cron
 STELE_CONFIG=/home/stele/.config/stele/config.toml
 
-# Daily sync
-0 1 * * * stele stele sync >> /var/log/stele/sync.log 2>&1
+# Daily sync (wiki/ Markdown index)
+0 1 * * * stele sync >> /var/log/stele/sync.log 2>&1
 
 # Daily lint
-0 3 * * * stele stele maintain --scope lint >> /var/log/stele/lint.log 2>&1
+0 3 * * * stele maintain --scope lint >> /var/log/stele/lint.log 2>&1
 
 # Weekly full maintenance
-0 2 * * 0 stele stele maintain --scope full >> /var/log/stele/maintenance.log 2>&1
+0 2 * * 0 stele maintain --scope full >> /var/log/stele/maintenance.log 2>&1
 ```
 
 3. Create log directory with proper permissions:
@@ -234,6 +234,8 @@ Environment="STELE_CONFIG=%h/.config/stele/config.toml"
 Environment="RUST_LOG=warn"
 ExecStart=stele sync
 ```
+
+This service syncs the default `wiki/` Markdown index; `raw/` source material remains unindexed.
 
 ### 5. Timer unit: `~/.config/systemd/user/stele-sync.timer`
 
@@ -363,7 +365,7 @@ This simulates the minimal environment cron provides.
 | `stele maintain --scope orphans` | stele-lint (phase 2) | Yes |
 | `stele maintain --scope backlinks` | stele-lint (phase 3) | Yes |
 | `stele maintain --scope full` | stele-lint (all phases) | Yes |
-| `stele sync` | N/A | Yes |
+| `stele sync` | N/A (wiki/ Markdown index) | Yes |
 | `stele stats` | N/A | Yes |
 | `stele search` | stele-query | No (manual) |
 | `stele page put` | stele-ingest | No (manual) |
