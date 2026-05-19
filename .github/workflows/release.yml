@@ -46,6 +46,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: DeterminateSystems/nix-installer-action@v14
 
