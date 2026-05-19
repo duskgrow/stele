@@ -14,6 +14,8 @@ pub mod search_op;
 pub mod stats_op;
 pub mod sync;
 pub mod sync_op;
+pub mod tags_list_op;
+pub mod tags_search_op;
 
 pub use handler::{OpExec, OpHandler, OperationContext};
 

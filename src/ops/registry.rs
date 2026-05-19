@@ -104,8 +104,8 @@ mod tests {
         let metas = reg.list_operations();
         assert_eq!(
             metas.len(),
-            10,
-            "expected 10 operations, got {}",
+            12,
+            "expected 12 operations, got {}",
             metas.len()
         );
 

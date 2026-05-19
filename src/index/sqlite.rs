@@ -19,6 +19,23 @@ pub struct IndexStats {
     pub orphan_count: i64,
 }
 
+/// A search result from tag-based queries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagSearchHit {
+    pub slug: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub page_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct TagSearchHitRow {
+    slug: String,
+    title: String,
+    tags_json: String,
+    page_type: String,
+}
+
 impl IndexEngine {
     /// Access the underlying SQLite connection pool.
     pub fn pool(&self) -> &Pool<Sqlite> {
@@ -373,6 +390,83 @@ impl IndexEngine {
                 .map_err(|e| Error::Storage(format!("fts search: {e}")))?;
 
         Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// List all unique tags across all pages, sorted alphabetically.
+    pub async fn list_tags(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT value FROM pages, json_each(pages.tags_json) ORDER BY value",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Storage(format!("list_tags: {e}")))?;
+        Ok(rows)
+    }
+
+    /// Search pages by tags with OR or AND semantics.
+    pub async fn search_by_tags(
+        &self,
+        tags: &[String],
+        match_mode: &str,
+    ) -> Result<Vec<TagSearchHit>> {
+        let mut unique_tags = Vec::new();
+        for tag in tags {
+            if !unique_tags.contains(tag) {
+                unique_tags.push(tag.clone());
+            }
+        }
+        if unique_tags.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders: Vec<String> = (1..=unique_tags.len()).map(|i| format!("?{i}")).collect();
+        let in_clause = placeholders.join(", ");
+
+        let sql = if match_mode == "and" {
+            format!(
+                r#"SELECT p.slug, p.title, p.tags_json, p.page_type
+                   FROM pages p, json_each(p.tags_json) j
+                   WHERE j.value IN ({in_clause})
+                   GROUP BY p.slug
+                   HAVING COUNT(DISTINCT j.value) = ?{}
+                   ORDER BY p.title"#,
+                unique_tags.len() + 1
+            )
+        } else {
+            format!(
+                r#"SELECT DISTINCT p.slug, p.title, p.tags_json, p.page_type
+                   FROM pages p, json_each(p.tags_json) j
+                   WHERE j.value IN ({in_clause})
+                   ORDER BY p.title"#,
+            )
+        };
+
+        let mut query = sqlx::query_as::<_, TagSearchHitRow>(&sql);
+        for tag in &unique_tags {
+            query = query.bind(tag);
+        }
+        if match_mode == "and" {
+            query = query.bind(unique_tags.len() as i64);
+        }
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::Storage(format!("search_by_tags: {e}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let tags: Vec<String> = serde_json::from_str(&row.tags_json).map_err(|e| {
+                    Error::Storage(format!("search_by_tags: invalid tags_json: {e}"))
+                })?;
+                Ok(TagSearchHit {
+                    slug: row.slug,
+                    title: row.title,
+                    tags,
+                    page_type: row.page_type,
+                })
+            })
+            .collect()
     }
 }
 
@@ -815,5 +909,270 @@ mod tests {
 
         let stats = engine.get_stats().await.unwrap();
         assert_eq!(stats.orphan_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_empty() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        let tags = engine.list_tags().await.unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_dedup() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("page-a")
+        .bind("A")
+        .bind("Concept")
+        .bind("")
+        .bind("h1")
+        .bind("A content")
+        .bind("# A")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"A","page_type":"Concept","tags":["rust","web"],"sources":[]}"#)
+        .bind(r#"["rust","web"]"#)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("page-b")
+        .bind("B")
+        .bind("Concept")
+        .bind("")
+        .bind("h2")
+        .bind("B content")
+        .bind("# B")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"B","page_type":"Concept","tags":["rust","systems"],"sources":[]}"#)
+        .bind(r#"["rust","systems"]"#)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        let tags = engine.list_tags().await.unwrap();
+        assert_eq!(tags, vec!["rust", "systems", "web"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_sorted() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("page-z")
+        .bind("Z")
+        .bind("Concept")
+        .bind("")
+        .bind("hz")
+        .bind("Z content")
+        .bind("# Z")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"Z","page_type":"Concept","tags":["zebra","alpha"],"sources":[]}"#)
+        .bind(r#"["zebra","alpha"]"#)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        let tags = engine.list_tags().await.unwrap();
+        assert_eq!(tags, vec!["alpha", "zebra"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_tags_excludes_empty() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("empty-tags")
+        .bind("Empty")
+        .bind("Concept")
+        .bind("")
+        .bind("h1")
+        .bind("Empty content")
+        .bind("# Empty")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"Empty","page_type":"Concept","tags":[],"sources":[]}"#)
+        .bind("[]")
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "#,
+        )
+        .bind("with-tags")
+        .bind("With Tags")
+        .bind("Concept")
+        .bind("")
+        .bind("h2")
+        .bind("With tags content")
+        .bind("# With Tags")
+        .bind("[]")
+        .bind("")
+        .bind(r#"{"title":"With Tags","page_type":"Concept","tags":[" notable "],"sources":[]}"#)
+        .bind(r#"[" notable "]"#)
+        .bind("2024-01-01T00:00:00Z")
+        .bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool)
+        .await
+        .unwrap();
+
+        let tags = engine.list_tags().await.unwrap();
+        assert_eq!(tags, vec![" notable "]);
+    }
+
+    async fn insert_test_page(engine: &IndexEngine, slug: &str, title: &str, tags: &[&str]) {
+        let tags_json = serde_json::to_string(tags).unwrap();
+        sqlx::query(
+            r#"INSERT INTO pages (slug, title, page_type, vault, content_hash, compiled_truth, raw_content,
+                timeline_json, timeline_text, frontmatter_json, tags_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"#,
+        )
+        .bind(slug).bind(title).bind("Concept").bind("")
+        .bind(format!("h-{slug}")).bind(format!("{title} content")).bind(format!("# {title}"))
+        .bind("[]").bind("")
+        .bind(format!(r#"{{"title":"{title}","page_type":"Concept","tags":{tags_json},"sources":[]}}"#))
+        .bind(&tags_json)
+        .bind("2024-01-01T00:00:00Z").bind("2024-01-01T00:00:00Z")
+        .execute(&engine.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_or() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        insert_test_page(&engine, "rust-web", "Rust Web", &["rust", "web"]).await;
+        insert_test_page(
+            &engine,
+            "rust-systems",
+            "Rust Systems",
+            &["rust", "systems"],
+        )
+        .await;
+
+        let hits = engine
+            .search_by_tags(&["rust".to_string(), "python".to_string()], "or")
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().any(|h| h.slug == "rust-web"));
+        assert!(hits.iter().any(|h| h.slug == "rust-systems"));
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_and() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        insert_test_page(&engine, "rust-web", "Rust Web", &["rust", "web"]).await;
+        insert_test_page(
+            &engine,
+            "rust-systems",
+            "Rust Systems",
+            &["rust", "systems"],
+        )
+        .await;
+
+        let hits = engine
+            .search_by_tags(&["rust".to_string(), "web".to_string()], "and")
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].slug, "rust-web");
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_and_deduplicates_input() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        insert_test_page(&engine, "rust-web", "Rust Web", &["rust", "web"]).await;
+        insert_test_page(
+            &engine,
+            "rust-systems",
+            "Rust Systems",
+            &["rust", "systems"],
+        )
+        .await;
+
+        let hits = engine
+            .search_by_tags(&["rust".to_string(), "rust".to_string()], "and")
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().any(|h| h.slug == "rust-web"));
+        assert!(hits.iter().any(|h| h.slug == "rust-systems"));
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_empty_input() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        let hits = engine.search_by_tags(&[], "or").await.unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_no_match() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        insert_test_page(&engine, "rust-web", "Rust Web", &["rust", "web"]).await;
+
+        let hits = engine
+            .search_by_tags(&["nonexistent".to_string()], "or")
+            .await
+            .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_by_tags_returns_fields() {
+        let engine = IndexEngine::new(":memory:").await.unwrap();
+        insert_test_page(&engine, "rust-web", "Rust Web", &["rust", "web"]).await;
+
+        let hits = engine
+            .search_by_tags(&["rust".to_string()], "or")
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        let hit = &hits[0];
+        assert_eq!(hit.slug, "rust-web");
+        assert_eq!(hit.title, "Rust Web");
+        assert_eq!(hit.tags, vec!["rust", "web"]);
+        assert_eq!(hit.page_type, "Concept");
     }
 }

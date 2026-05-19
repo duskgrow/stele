@@ -170,7 +170,7 @@ async fn test_tools_list_returns_all_operations() {
     let reg = test_registry(&server.uri()).await;
 
     let ops = reg.list_operations();
-    assert_eq!(ops.len(), 10);
+    assert_eq!(ops.len(), 12);
 
     let names: Vec<&str> = ops.iter().map(|o| o.name.as_str()).collect();
     assert!(names.contains(&"page.get"));

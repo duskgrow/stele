@@ -88,7 +88,7 @@ mod tests {
         let metas = registry.list_operations();
         let tools: Vec<Tool> = metas.iter().map(SteleMcpServer::meta_to_tool).collect();
 
-        assert_eq!(tools.len(), 10, "expected 10 tools, got {}", tools.len());
+        assert_eq!(tools.len(), 12, "expected 12 tools, got {}", tools.len());
 
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
         assert!(names.contains(&"page.get".to_string()));
